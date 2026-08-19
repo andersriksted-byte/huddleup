@@ -6,7 +6,7 @@ import {
   Lock, Eye, EyeOff, LogOut, LogIn, Key, Copy, Shield, Edit2, Check, User, Download, FileSpreadsheet, FileText, MoreVertical,
   Mail, ArrowLeft, RotateCcw
 } from "lucide-react";
-import { where, doc, setDoc, getDocs, collection, query as fsQuery } from "firebase/firestore";
+import { where, doc, setDoc, deleteDoc, getDocs, collection, query as fsQuery } from "firebase/firestore";
 import { db, newDocId } from "./lib/firebase.js";
 import { useAuth } from "./hooks/useAuth.js";
 import { useFirestoreCollection } from "./hooks/useFirestoreCollection.js";
@@ -761,10 +761,20 @@ function IntroModal({onClose}){
 /* ═══════════════════════════════════════════════════════════
    VENNER-MODAL (profil-dropdown)
 ═══════════════════════════════════════════════════════════ */
-function FriendsModal({currentUser,players,friends,friendRequests,myPendingInvites,onSendRequest,onCancelRequest,onRemoveFriend,onClose}){
+function FriendsModal({currentUser,players,friends,friendRequests,myPendingInvites,onSendRequest,onCancelRequest,onRemoveFriend,onCancelPendingInvite,onClose}){
   const [query,setQuery]=useState("");
   const [pendingSend,setPendingSend]=useState(null); // spiller man er ved at bekræfte en venneanmodning til
   const [confirmRemoveId,setConfirmRemoveId]=useState(null); // spiller man er ved at bekræfte at ville fjerne
+  // Inviter en helt ny person der endnu ikke har en Huddleup-konto, direkte fra vennelisten —
+  // samme mekanisme som "Inviter en ny spiller" i forespørgsler, men ikke bundet til nogen
+  // bestemt forespørgsel (invitationId:null). De bliver automatisk din ven, når de opretter sig.
+  const [showInviteNew,setShowInviteNew]=useState(false);
+  const [newInvName,setNewInvName]=useState("");
+  const [newInvEmail,setNewInvEmail]=useState("");
+  const [inviteBusy,setInviteBusy]=useState(false);
+  const [inviteErr,setInviteErr]=useState("");
+  const [sentInvite,setSentInvite]=useState(null);
+  const emailValid=(e)=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim());
   const myFriendIds=useMemo(()=>new Set(friends[currentUser.id]||[]),[friends,currentUser]);
   // "players" er nu selve profil-collection'en (navn+email+telefon samlet ét sted), så der er
   // ikke længere brug for at slå en separat "users"-liste op og flette den ind.
@@ -775,6 +785,13 @@ function FriendsModal({currentUser,players,friends,friendRequests,myPendingInvit
   // Man kan have sendt invitationen flere gange (fx til samme forespørgsel og igen manuelt) — her
   // vises kun ét kort pr. e-mail, uanset hvor mange "invites"-dokumenter der reelt findes.
   const dedupedPendingInvites=useMemo(()=>dedupeInvitesByEmail(myPendingInvites),[myPendingInvites]);
+  const pendingInviteEmails=useMemo(()=>new Set(dedupedPendingInvites.map(iv=>(iv.email||"").trim().toLowerCase())),[dedupedPendingInvites]);
+  // Der kan ligge flere "invites"-dokumenter for samme e-mail (kun det seneste vises jf. ovenfor)
+  // — når man fortryder, skal alle af dem fjernes, ellers "spøger" personen videre på listen.
+  const cancelAllForEmail=(email)=>{
+    const key=(email||"").trim().toLowerCase();
+    (myPendingInvites||[]).filter(iv=>(iv.email||"").trim().toLowerCase()===key).forEach(iv=>onCancelPendingInvite&&onCancelPendingInvite(iv.id));
+  };
   const searchResults=useMemo(()=>{
     const q=query.trim().toLowerCase();
     if(!q)return[];
@@ -784,6 +801,15 @@ function FriendsModal({currentUser,players,friends,friendRequests,myPendingInvit
       (p.phone||"").replace(/\s/g,"").includes(q.replace(/\s/g,""))
     )).slice(0,8);
   },[enriched,query,myFriendIds,outgoingIds]);
+  // Findes e-mailen allerede — enten som en oprettet bruger eller som en afventende invitation —
+  // så advares der i stedet for stiltiende at sende endnu en invitation til samme person.
+  const newInvEmailMatch=useMemo(()=>{
+    const q=newInvEmail.trim().toLowerCase();
+    if(!q)return null;
+    if(pendingInviteEmails.has(q))return"pending";
+    if(players.some(p=>(p.email||"").trim().toLowerCase()===q))return"existing";
+    return null;
+  },[newInvEmail,pendingInviteEmails,players]);
 
   const confirmSendRequest=()=>{
     if(!pendingSend)return;
@@ -795,6 +821,22 @@ function FriendsModal({currentUser,players,friends,friendRequests,myPendingInvit
     if(!confirmRemoveId)return;
     onRemoveFriend(confirmRemoveId);
     setConfirmRemoveId(null);
+  };
+  const inviteNewPerson=async()=>{
+    const name=newInvName.trim(),email=newInvEmail.trim();
+    if(!name||!emailValid(email)||newInvEmailMatch)return;
+    setInviteErr("");setInviteBusy(true);
+    try{
+      const inviteId=newDocId("invites");
+      await setDoc(doc(db,"invites",inviteId),{email,name,invitedByUid:currentUser.id,invitedByName:currentUser.name,invitationId:null,createdAt:new Date().toISOString(),status:"pending"});
+      await sendInviteEmail({toEmail:email,toName:name,fromName:currentUser.name,invitationTitle:"",signupUrl:`${window.location.origin}${import.meta.env.BASE_URL}`});
+      setSentInvite({name,email});
+      setNewInvName("");setNewInvEmail("");
+    }catch(e){
+      setInviteErr(e.message||"Kunne ikke sende invitationen.");
+    }finally{
+      setInviteBusy(false);
+    }
   };
   const removeTarget=confirmRemoveId?enriched.find(p=>p.id===confirmRemoveId):null;
 
@@ -853,6 +895,42 @@ function FriendsModal({currentUser,players,friends,friendRequests,myPendingInvit
               )}
             </div>
           </div>
+          <div>
+            {!showInviteNew?(
+              <button type="button" onClick={()=>{setShowInviteNew(true);setSentInvite(null);setInviteErr("");}}
+                className="inline-flex items-center gap-1.5 text-xs text-blue-700 hover:underline font-medium">
+                <Mail size={12}/> Personen har ikke Huddleup endnu? Inviter på e-mail
+              </button>
+            ):(
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+                <div className="text-xs font-semibold text-slate-600 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5"><Mail size={12}/> Inviter en ny person på e-mail</span>
+                  <button type="button" onClick={()=>setShowInviteNew(false)} className="text-slate-400 hover:text-slate-600"><X size={13}/></button>
+                </div>
+                {sentInvite?(
+                  <div className="text-xs text-lime-700 bg-lime-50 border border-lime-200 rounded-lg px-2.5 py-2">
+                    Invitation sendt til <span className="font-semibold">{sentInvite.name}</span> ({sentInvite.email}).
+                  </div>
+                ):(
+                  <>
+                    <div className="flex gap-2 flex-wrap">
+                      <input type="text" placeholder="Navn" value={newInvName} onChange={e=>setNewInvName(e.target.value)}
+                        className="flex-1 min-w-28 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+                      <input type="email" placeholder="E-mail" value={newInvEmail} onChange={e=>setNewInvEmail(e.target.value)}
+                        className="flex-1 min-w-36 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+                    </div>
+                    {newInvEmailMatch==="pending"&&<p className="text-xs text-amber-600 font-medium">Denne e-mail er allerede inviteret og afventer stadig svar.</p>}
+                    {newInvEmailMatch==="existing"&&<p className="text-xs text-amber-600 font-medium">Denne e-mail har allerede en Huddleup-konto.</p>}
+                    {inviteErr&&<p className="text-xs text-red-500 font-medium">{inviteErr}</p>}
+                    <button type="button" onClick={inviteNewPerson} disabled={inviteBusy||!newInvName.trim()||!emailValid(newInvEmail)||!!newInvEmailMatch}
+                      className="w-full inline-flex items-center justify-center gap-1.5 bg-blue-700 text-white text-sm font-medium rounded-lg px-3 py-2 disabled:opacity-40 hover:bg-blue-800">
+                      <UserPlus size={14}/> {inviteBusy?"Sender…":"Send invitation"}
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
           {outgoingRequests.length>0&&(
             <div>
               <label className="block text-xs font-semibold text-slate-500 mb-1.5">Afsendte anmodninger — afventer svar ({outgoingRequests.length})</label>
@@ -884,6 +962,7 @@ function FriendsModal({currentUser,players,friends,friendRequests,myPendingInvit
                       <span className="block text-[10px] text-slate-400 truncate">{inv.email}</span>
                     </span>
                     <span className="text-[10px] text-blue-600 font-medium shrink-0">Afventer</span>
+                    {onCancelPendingInvite&&<button onClick={()=>cancelAllForEmail(inv.email)} title="Fortryd invitation" className="text-slate-400 hover:text-red-500 shrink-0"><X size={14}/></button>}
                   </div>
                 ))}
               </div>
@@ -917,7 +996,7 @@ function FriendsModal({currentUser,players,friends,friendRequests,myPendingInvit
 /* ═══════════════════════════════════════════════════════════
    KAPTAJNENS OVERBLIK
 ═══════════════════════════════════════════════════════════ */
-function KaptajnOverblik({players,setPlayers,avail,setAvail,baseMonday,today,setTab,setActivePlayerId,currentUser,invitations,setInvitations,matches,setMatches,lockedPlayers,setLockedPlayers,drafts,setDrafts,setOpenDraftId,friends,setFriends,templates,setTemplates,friendRequests,myPendingInvites,onAcceptFriendRequest,onDeclineFriendRequest,focusInvitationId,setFocusInvitationId}){
+function KaptajnOverblik({players,setPlayers,avail,setAvail,baseMonday,today,setTab,setActivePlayerId,currentUser,invitations,setInvitations,matches,setMatches,lockedPlayers,setLockedPlayers,drafts,setDrafts,setOpenDraftId,friends,setFriends,templates,setTemplates,friendRequests,myPendingInvites,onCancelPendingInvite,onAcceptFriendRequest,onDeclineFriendRequest,focusInvitationId,setFocusInvitationId}){
   const updateInvitation=(id,fn)=>setInvitations(prev=>prev.map(inv=>inv.id===id?fn(inv):inv));
   const deleteInvitation=(id)=>setInvitations(prev=>prev.filter(inv=>inv.id!==id));
 
@@ -1058,7 +1137,7 @@ function KaptajnOverblik({players,setPlayers,avail,setAvail,baseMonday,today,set
             setTab={setTab} setActivePlayerId={setActivePlayerId} currentUser={currentUser} matches={matches} setMatches={setMatches}
             updateInvitation={updateInvitation} deleteInvitation={deleteInvitation} lockedPlayers={lockedPlayers} setLockedPlayers={setLockedPlayers} friends={friends} setFriends={setFriends}
             invitations={invitations} setInvitations={setInvitations} templates={templates} setTemplates={setTemplates} setDrafts={setDrafts} setOpenDraftId={setOpenDraftId}
-            myPendingInvites={myPendingInvites}
+            myPendingInvites={myPendingInvites} onCancelPendingInvite={onCancelPendingInvite}
             focusInvitationId={focusInvitationId} setFocusInvitationId={setFocusInvitationId}/>
         ))
       )}
@@ -1069,7 +1148,7 @@ function KaptajnOverblik({players,setPlayers,avail,setAvail,baseMonday,today,set
 /* ═══════════════════════════════════════════════════════════
    FORESPØRGSELS-RUBRIK (én pr. anmodning)
 ═══════════════════════════════════════════════════════════ */
-function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday,today,setTab,setActivePlayerId,currentUser,matches,setMatches,updateInvitation,deleteInvitation,lockedPlayers,setLockedPlayers,friends,setFriends,invitations,setInvitations,templates,setTemplates,setDrafts,setOpenDraftId,myPendingInvites,focusInvitationId,setFocusInvitationId}){
+function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday,today,setTab,setActivePlayerId,currentUser,matches,setMatches,updateInvitation,deleteInvitation,lockedPlayers,setLockedPlayers,friends,setFriends,invitations,setInvitations,templates,setTemplates,setDrafts,setOpenDraftId,myPendingInvites,onCancelPendingInvite,focusInvitationId,setFocusInvitationId}){
   const [weekOffset,setWeekOffset]=useState(0);
   // Standardværdier hentes fra forespørgslens egne indstillinger (sat da den blev oprettet)
   const [threshold,setThreshold]=useState(invitation.minPlayers||Math.max(4,Math.floor(players.length*0.7)));
@@ -1255,6 +1334,11 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
   // (se "Inviter en ny spiller" og handleSignup i App()) — vises som "afventer" ligesom spillere
   // der endnu ikke har accepteret, så de ikke forsvinder ud af syne efter selve invitationen.
   const myPendingInvitesForThis=useMemo(()=>dedupeInvitesByEmail((myPendingInvites||[]).filter(iv=>iv.invitationId===invitation.id)),[myPendingInvites,invitation.id]);
+  const cancelAllPendingInvitesForEmail=(email)=>{
+    const key=(email||"").trim().toLowerCase();
+    (myPendingInvites||[]).filter(iv=>iv.invitationId===invitation.id&&(iv.email||"").trim().toLowerCase()===key)
+      .forEach(iv=>onCancelPendingInvite&&onCancelPendingInvite(iv.id));
+  };
 
   // Invitation-periode grænser
   const invMinWeek=useMemo(()=>Math.max(0,Math.round((mondayOf(new Date(invitation.startIso))-baseMonday)/(7*864e5))),[invitation,baseMonday]);
@@ -1721,6 +1805,7 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
                 <span key={inv.id} className="inline-flex items-center gap-1.5 text-xs bg-white text-amber-700 border border-amber-200 rounded-full pl-1 pr-2 py-1">
                   <span className="w-5 h-5 rounded-full bg-amber-200 text-amber-800 grid place-items-center shrink-0"><Mail size={10}/></span>
                   {inv.name} <span className="text-amber-400">afventer accept</span>
+                  {canDelete&&!isClosed&&onCancelPendingInvite&&<button onClick={()=>cancelAllPendingInvitesForEmail(inv.email)} title="Fortryd invitation" className="text-amber-400 hover:text-red-500 ml-0.5"><X size={11}/></button>}
                 </span>
               ))}
             </div>
@@ -2194,7 +2279,7 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
 /* ═══════════════════════════════════════════════════════════
    OPRET FORESPØRGSEL (alle kan oprette deres egen)
 ═══════════════════════════════════════════════════════════ */
-function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations,setInvitations,today,setTab,drafts,setDrafts,openDraftId,setOpenDraftId,friends,setFriends}){
+function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations,setInvitations,today,setTab,drafts,setDrafts,openDraftId,setOpenDraftId,friends,setFriends,myPendingInvites,onCancelPendingInvite}){
   const [invTitle,setInvTitle]=useState("");
   const [invDescription,setInvDescription]=useState("");
   const [invStart,setInvStart]=useState(()=>{const d=new Date(today);d.setDate(d.getDate()+1);return isoDate(d);});
@@ -2260,12 +2345,31 @@ function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations
   const addExistingPlayer=(id)=>{setInvPlayers(prev=>new Set(prev).add(id));setPlayerSearch("");};
   const removeInvited=(id)=>setInvPlayers(prev=>{const n=new Set(prev);n.delete(id);return n;});
 
+  // Folk du allerede har inviteret på mail til netop denne (endnu ikke afsendte) forespørgsel, og
+  // som stadig ikke har oprettet en konto — vist så man kan se hvem der allerede er inviteret, i
+  // stedet for at risikere at invitere samme person to gange eller glemme en undervejs.
+  const invitedForThisDraft=useMemo(()=>dedupeInvitesByEmail((myPendingInvites||[]).filter(iv=>iv.invitationId===invId)),[myPendingInvites,invId]);
+  const cancelInvitedForThisDraft=(email)=>{
+    const key=(email||"").trim().toLowerCase();
+    (myPendingInvites||[]).filter(iv=>iv.invitationId===invId&&(iv.email||"").trim().toLowerCase()===key)
+      .forEach(iv=>onCancelPendingInvite&&onCancelPendingInvite(iv.id));
+  };
+  // Findes e-mailen allerede — enten som oprettet bruger eller som en afventende invitation (til
+  // denne eller en anden forespørgsel/venneliste) — advares der i stedet for at sende igen.
+  const newInvEmailMatch=useMemo(()=>{
+    const q=newInvEmail.trim().toLowerCase();
+    if(!q)return null;
+    if((myPendingInvites||[]).some(iv=>(iv.email||"").trim().toLowerCase()===q))return"pending";
+    if(players.some(p=>(p.email||"").trim().toLowerCase()===q))return"existing";
+    return null;
+  },[newInvEmail,myPendingInvites,players]);
+
   // Se kommentaren ved InvitationCard's inviteNewEditPlayer: opretter ikke en konto med det
   // samme (kræver en server), men gemmer en ventende invitation + sender en rigtig mail med et
   // signup-link via EmailJS. Spilleren tilføjes automatisk her, når de selv opretter en konto.
   const inviteNewPlayer=async()=>{
     const name=newInvName.trim(),email=newInvEmail.trim();
-    if(!name||!emailValid(email))return;
+    if(!name||!emailValid(email)||newInvEmailMatch)return;
     setInviteErr("");setInviteBusy(true);
     try{
       const inviteId=newDocId("invites");
@@ -2427,16 +2531,35 @@ function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations
 
           <div className="border-t border-slate-100 mt-3 pt-3 space-y-2">
             <div className="text-xs font-medium text-slate-600">Inviter en ny spiller (findes ikke endnu)</div>
+            {invitedForThisDraft.length>0&&(
+              <div className="space-y-1.5">
+                <p className="text-[11px] text-slate-400">Allerede inviteret til denne forespørgsel, afventer stadig at oprette en konto:</p>
+                <div className="space-y-1">
+                  {invitedForThisDraft.map(inv=>(
+                    <div key={inv.id} className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5">
+                      <span className="w-5 h-5 rounded-full bg-amber-200 text-amber-800 grid place-items-center shrink-0"><Mail size={10}/></span>
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-xs text-slate-700 truncate">{inv.name}</span>
+                        <span className="block text-[10px] text-slate-400 truncate">{inv.email}</span>
+                      </span>
+                      <button type="button" onClick={()=>cancelInvitedForThisDraft(inv.email)} title="Fortryd invitation" className="text-slate-400 hover:text-red-500 shrink-0"><X size={13}/></button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="flex gap-2 flex-wrap">
               <input type="text" placeholder="Navn" value={newInvName} onChange={e=>setNewInvName(e.target.value)}
                 className="flex-1 min-w-28 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
               <input type="email" placeholder="E-mail" value={newInvEmail} onChange={e=>setNewInvEmail(e.target.value)}
                 className="flex-1 min-w-36 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
-              <button type="button" onClick={inviteNewPlayer} disabled={inviteBusy||!newInvName.trim()||!emailValid(newInvEmail)}
+              <button type="button" onClick={inviteNewPlayer} disabled={inviteBusy||!newInvName.trim()||!emailValid(newInvEmail)||!!newInvEmailMatch}
                 className="inline-flex items-center gap-1.5 bg-blue-700 text-white text-sm font-medium rounded-lg px-3 py-2 disabled:opacity-40 hover:bg-blue-800">
                 <UserPlus size={14}/> {inviteBusy?"Sender…":"Inviter"}
               </button>
             </div>
+            {newInvEmailMatch==="pending"&&<p className="text-xs text-amber-600 font-medium">Denne e-mail er allerede inviteret og afventer stadig svar.</p>}
+            {newInvEmailMatch==="existing"&&<p className="text-xs text-amber-600 font-medium">Denne e-mail har allerede en Huddleup-konto — søg efter personen som ven ovenfor i stedet.</p>}
             {inviteErr&&<p className="text-xs text-red-500 font-medium">{inviteErr}</p>}
             {sentInvite&&(
               <div className="border border-lime-200 bg-lime-50 rounded-xl p-3 space-y-2">
@@ -2448,7 +2571,6 @@ function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations
                   <div><span className="text-slate-400">Til:</span> {sentInvite.email}</div>
                   <div className="text-slate-500">{sentInvite.name} tilføjes automatisk til denne forespørgsel, når de opretter deres konto via linket i mailen.</div>
                 </div>
-                <p className="text-[10px] text-slate-400">Demo — ingen rigtig mail sendes.</p>
               </div>
             )}
           </div>
@@ -3209,6 +3331,10 @@ export default function App(){
   // fra syne indtil personen rent faktisk opretter en konto (se handleSignup).
   const myPendingInvitesQuery=useMemo(()=>firebaseUser?[where("invitedByUid","==",firebaseUser.uid),where("status","==","pending")]:[],[firebaseUser?.uid]);
   const [myPendingInvites]=useFirestoreCollection("invites",myPendingInvitesQuery,!!firebaseUser);
+  // Fortryd/annuller en afsendt-men-endnu-ikke-indløst invitation (fx hvis man kom til at invitere
+  // den forkerte, eller samme person to gange) — sletter blot "invites"-dokumentet, personen kan
+  // ikke længere bruge signup-linket til automatisk at blive tilføjet.
+  const cancelPendingInvite=(inviteId)=>deleteDoc(doc(db,"invites",inviteId)).catch(()=>{});
 
   // Delt hold-data der ikke naturligt er "en liste af poster med hvert sit id" gemmes i stedet
   // som ét samlet dokument hver (se useFirestoreDocState) — det matcher den oprindelige
@@ -3353,7 +3479,7 @@ export default function App(){
       )}
       {showFriends&&(
         <FriendsModal currentUser={currentUser} players={players} friends={friends} friendRequests={friendRequests} myPendingInvites={myPendingInvites}
-          onSendRequest={sendFriendRequest} onCancelRequest={cancelFriendRequest} onRemoveFriend={removeFriend} onClose={()=>setShowFriends(false)}/>
+          onSendRequest={sendFriendRequest} onCancelRequest={cancelFriendRequest} onRemoveFriend={removeFriend} onCancelPendingInvite={cancelPendingInvite} onClose={()=>setShowFriends(false)}/>
       )}
       {showIntro&&<IntroModal onClose={()=>setShowIntro(false)}/>}
       <div className="max-w-3xl mx-auto space-y-4">
@@ -3414,8 +3540,8 @@ export default function App(){
           </div>
         </div>
 
-        {tab==="overblik"&&<KaptajnOverblik players={players} setPlayers={setPlayers} avail={avail} setAvail={setAvail} baseMonday={baseMonday} today={today} setTab={setTab} setActivePlayerId={setActivePlayerId} currentUser={currentUser} invitations={invitations} setInvitations={setInvitations} matches={matches} setMatches={setMatches} lockedPlayers={lockedPlayers} setLockedPlayers={setLockedPlayers} drafts={drafts} setDrafts={setDrafts} setOpenDraftId={setOpenDraftId} friends={friends} setFriends={setFriends} templates={templates} setTemplates={setTemplates} friendRequests={friendRequests} myPendingInvites={myPendingInvites} onAcceptFriendRequest={acceptFriendRequest} onDeclineFriendRequest={declineFriendRequest} focusInvitationId={focusInvitationId} setFocusInvitationId={setFocusInvitationId}/>}
-        {tab==="forespoergsel"&&<OpretForespoergsel players={players} setPlayers={setPlayers} setAvail={setAvail} currentUser={currentUser} invitations={invitations} setInvitations={setInvitations} today={today} setTab={setTab} drafts={drafts} setDrafts={setDrafts} openDraftId={openDraftId} setOpenDraftId={setOpenDraftId} friends={friends} setFriends={setFriends}/>}
+        {tab==="overblik"&&<KaptajnOverblik players={players} setPlayers={setPlayers} avail={avail} setAvail={setAvail} baseMonday={baseMonday} today={today} setTab={setTab} setActivePlayerId={setActivePlayerId} currentUser={currentUser} invitations={invitations} setInvitations={setInvitations} matches={matches} setMatches={setMatches} lockedPlayers={lockedPlayers} setLockedPlayers={setLockedPlayers} drafts={drafts} setDrafts={setDrafts} setOpenDraftId={setOpenDraftId} friends={friends} setFriends={setFriends} templates={templates} setTemplates={setTemplates} friendRequests={friendRequests} myPendingInvites={myPendingInvites} onCancelPendingInvite={cancelPendingInvite} onAcceptFriendRequest={acceptFriendRequest} onDeclineFriendRequest={declineFriendRequest} focusInvitationId={focusInvitationId} setFocusInvitationId={setFocusInvitationId}/>}
+        {tab==="forespoergsel"&&<OpretForespoergsel players={players} setPlayers={setPlayers} setAvail={setAvail} currentUser={currentUser} invitations={invitations} setInvitations={setInvitations} today={today} setTab={setTab} drafts={drafts} setDrafts={setDrafts} openDraftId={openDraftId} setOpenDraftId={setOpenDraftId} friends={friends} setFriends={setFriends} myPendingInvites={myPendingInvites} onCancelPendingInvite={cancelPendingInvite}/>}
         {tab==="kalender"&&<SpillerKalender currentUser={currentUser} players={players} avail={avail} setAvail={setAvail} invitations={invitations} setInvitations={setInvitations} baseMonday={baseMonday} today={today} activePlayerId={activePlayerId} setActivePlayerId={setActivePlayerId} templates={templates} setTemplates={setTemplates} lockedPlayers={lockedPlayers} setLockedPlayers={setLockedPlayers}/>}
 
         <p className="text-center text-[11px] text-slate-400 pt-2 pb-1">© {new Date().getFullYear()} Rikabilly Production</p>
