@@ -750,7 +750,7 @@ function IntroModal({onClose}){
 /* ═══════════════════════════════════════════════════════════
    VENNER-MODAL (profil-dropdown)
 ═══════════════════════════════════════════════════════════ */
-function FriendsModal({currentUser,players,friends,friendRequests,onSendRequest,onCancelRequest,onRemoveFriend,onClose}){
+function FriendsModal({currentUser,players,friends,friendRequests,myPendingInvites,onSendRequest,onCancelRequest,onRemoveFriend,onClose}){
   const [query,setQuery]=useState("");
   const [pendingSend,setPendingSend]=useState(null); // spiller man er ved at bekræfte en venneanmodning til
   const [confirmRemoveId,setConfirmRemoveId]=useState(null); // spiller man er ved at bekræfte at ville fjerne
@@ -858,6 +858,23 @@ function FriendsModal({currentUser,players,friends,friendRequests,onSendRequest,
               </div>
             </div>
           )}
+          {(myPendingInvites||[]).length>0&&(
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-1.5">Inviteret — afventer oprettelse af konto ({myPendingInvites.length})</label>
+              <div className="space-y-1.5">
+                {myPendingInvites.map(inv=>(
+                  <div key={inv.id} className="flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-lg px-2.5 py-2">
+                    <span className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 grid place-items-center shrink-0"><Mail size={12}/></span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-sm text-slate-700 truncate">{inv.name}</span>
+                      <span className="block text-[10px] text-slate-400 truncate">{inv.email}</span>
+                    </span>
+                    <span className="text-[10px] text-blue-600 font-medium shrink-0">Afventer</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1.5">Dine venner ({myFriends.length})</label>
             {myFriends.length===0?(
@@ -886,7 +903,7 @@ function FriendsModal({currentUser,players,friends,friendRequests,onSendRequest,
 /* ═══════════════════════════════════════════════════════════
    KAPTAJNENS OVERBLIK
 ═══════════════════════════════════════════════════════════ */
-function KaptajnOverblik({players,setPlayers,avail,setAvail,baseMonday,today,setTab,setActivePlayerId,currentUser,invitations,setInvitations,matches,setMatches,lockedPlayers,setLockedPlayers,drafts,setDrafts,setOpenDraftId,friends,setFriends,templates,setTemplates,friendRequests,onAcceptFriendRequest,onDeclineFriendRequest,focusInvitationId,setFocusInvitationId}){
+function KaptajnOverblik({players,setPlayers,avail,setAvail,baseMonday,today,setTab,setActivePlayerId,currentUser,invitations,setInvitations,matches,setMatches,lockedPlayers,setLockedPlayers,drafts,setDrafts,setOpenDraftId,friends,setFriends,templates,setTemplates,friendRequests,myPendingInvites,onAcceptFriendRequest,onDeclineFriendRequest,focusInvitationId,setFocusInvitationId}){
   const updateInvitation=(id,fn)=>setInvitations(prev=>prev.map(inv=>inv.id===id?fn(inv):inv));
   const deleteInvitation=(id)=>setInvitations(prev=>prev.filter(inv=>inv.id!==id));
 
@@ -1027,6 +1044,7 @@ function KaptajnOverblik({players,setPlayers,avail,setAvail,baseMonday,today,set
             setTab={setTab} setActivePlayerId={setActivePlayerId} currentUser={currentUser} matches={matches} setMatches={setMatches}
             updateInvitation={updateInvitation} deleteInvitation={deleteInvitation} lockedPlayers={lockedPlayers} setLockedPlayers={setLockedPlayers} friends={friends} setFriends={setFriends}
             invitations={invitations} setInvitations={setInvitations} templates={templates} setTemplates={setTemplates} setDrafts={setDrafts} setOpenDraftId={setOpenDraftId}
+            myPendingInvites={myPendingInvites}
             focusInvitationId={focusInvitationId} setFocusInvitationId={setFocusInvitationId}/>
         ))
       )}
@@ -1037,7 +1055,7 @@ function KaptajnOverblik({players,setPlayers,avail,setAvail,baseMonday,today,set
 /* ═══════════════════════════════════════════════════════════
    FORESPØRGSELS-RUBRIK (én pr. anmodning)
 ═══════════════════════════════════════════════════════════ */
-function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday,today,setTab,setActivePlayerId,currentUser,matches,setMatches,updateInvitation,deleteInvitation,lockedPlayers,setLockedPlayers,friends,setFriends,invitations,setInvitations,templates,setTemplates,setDrafts,setOpenDraftId,focusInvitationId,setFocusInvitationId}){
+function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday,today,setTab,setActivePlayerId,currentUser,matches,setMatches,updateInvitation,deleteInvitation,lockedPlayers,setLockedPlayers,friends,setFriends,invitations,setInvitations,templates,setTemplates,setDrafts,setOpenDraftId,myPendingInvites,focusInvitationId,setFocusInvitationId}){
   const [weekOffset,setWeekOffset]=useState(0);
   // Standardværdier hentes fra forespørgslens egne indstillinger (sat da den blev oprettet)
   const [threshold,setThreshold]=useState(invitation.minPlayers||Math.max(4,Math.floor(players.length*0.7)));
@@ -1191,18 +1209,38 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
 
   // Kun spillere der har accepteret invitationen tæller med i planlægningen
   const acceptedIds=useMemo(()=>invitation.playerIds.filter(id=>responseFor(invitation,id)==="accepted"),[invitation]);
+  // Ens kalender (kladde) er delt og genbruges gerne på tværs af flere forespørgsler — det er
+  // meningen, så man ikke skal udfylde de samme tider flere gange. MEN de tæller først med i
+  // holdets "Samlet tilgængelighed"/"Bedste tider"/fastlagte kampe for netop DENNE forespørgsel,
+  // når spilleren aktivt har trykket "Indsend" for netop den — indtil da er kladden kun synlig
+  // for spilleren selv i kalenderen, ikke for resten af holdet her.
+  const submittedAcceptedIds=useMemo(()=>{
+    const submitted=new Set(invitation.submittedIds||[]);
+    return acceptedIds.filter(id=>submitted.has(id));
+  },[acceptedIds,invitation.submittedIds]);
 
-  // Nulstil spillerfilter når anmodningens periode/spillere ændres
+  // Nulstil spillerfilter når anmodningens periode/spillere/indsendelser ændres
   useEffect(()=>{
-    setHeatIds(new Set(acceptedIds));
+    setHeatIds(new Set(submittedAcceptedIds));
     setBestTimesWeek(null);
-  },[invitation.startIso,invitation.endIso,acceptedIds.join(",")]);
+  },[invitation.startIso,invitation.endIso,acceptedIds.join(","),submittedAcceptedIds.join(",")]);
 
   const invitedPlayers=useMemo(()=>players.filter(p=>acceptedIds.includes(p.id)),[players,acceptedIds]);
+  const submittedPlayers=useMemo(()=>players.filter(p=>submittedAcceptedIds.includes(p.id)),[players,submittedAcceptedIds]);
   const scopePlayers=useMemo(()=>{
-    const ids=heatIds||new Set(acceptedIds);
+    const ids=heatIds||new Set(submittedAcceptedIds);
     return players.filter(p=>ids.has(p.id));
-  },[players,acceptedIds,heatIds]);
+  },[players,submittedAcceptedIds,heatIds]);
+
+  // Fastlagte kampe hører til netop DENNE forespørgsel — de må aldrig blande sig med kampe fra
+  // andre forespørgsler, selv hvis datoerne overlapper. Ældre kampe (fastlagt før dette felt
+  // fandtes) har intet invitationId og vises derfor ikke her; de kan ikke længere tilskrives en
+  // bestemt forespørgsel med sikkerhed.
+  const myMatches=useMemo(()=>(matches||[]).filter(m=>m.invitationId===invitation.id),[matches,invitation.id]);
+  // Folk inviteret via mail til netop denne forespørgsel, som endnu ikke har oprettet en konto
+  // (se "Inviter en ny spiller" og handleSignup i App()) — vises som "afventer" ligesom spillere
+  // der endnu ikke har accepteret, så de ikke forsvinder ud af syne efter selve invitationen.
+  const myPendingInvitesForThis=useMemo(()=>(myPendingInvites||[]).filter(iv=>iv.invitationId===invitation.id),[myPendingInvites,invitation.id]);
 
   // Invitation-periode grænser
   const invMinWeek=useMemo(()=>Math.max(0,Math.round((mondayOf(new Date(invitation.startIso))-baseMonday)/(7*864e5))),[invitation,baseMonday]);
@@ -1263,13 +1301,13 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
   // Eksport-funktioner — Fastlagte kampe
   const exportMatchesCSV=()=>{
     const rows=[['Dag','Dato','Tidspunkt','Antal spillere']];
-    matches.forEach(m=>{const d=new Date(m.iso);rows.push([WD_FULL[(d.getDay()+6)%7],`${d.getDate()}. ${MONTHS[d.getMonth()]}`,rangeLabel(m.block,m.hours||1),`${m.count}/${players.length}`]);});
+    myMatches.forEach(m=>{const d=new Date(m.iso);rows.push([WD_FULL[(d.getDay()+6)%7],`${d.getDate()}. ${MONTHS[d.getMonth()]}`,rangeLabel(m.block,m.hours||1),`${m.count}/${players.length}`]);});
     const csv=rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(';')).join('\r\n');
     const blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8;'});
     const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='fastlagte-kampe.csv';a.click();URL.revokeObjectURL(url);
   };
   const exportMatchesPDF=()=>{
-    const rows=matches.map(m=>{const d=new Date(m.iso);return `<tr><td>${WD_FULL[(d.getDay()+6)%7]} ${fmtShort(d)}</td><td>${rangeLabel(m.block,m.hours||1)}</td><td style="text-align:center">${m.count}/${players.length}</td></tr>`;}).join('');
+    const rows=myMatches.map(m=>{const d=new Date(m.iso);return `<tr><td>${WD_FULL[(d.getDay()+6)%7]} ${fmtShort(d)}</td><td>${rangeLabel(m.block,m.hours||1)}</td><td style="text-align:center">${m.count}/${players.length}</td></tr>`;}).join('');
     const html=`<!DOCTYPE html><html lang="da"><head><meta charset="UTF-8"><title>Fastlagte kampe</title><style>body{font-family:system-ui,sans-serif;padding:24px;color:#1e293b;font-size:12px}h1{font-size:15px;margin:0 0 4px}p{color:#64748b;margin:0 0 16px}table{width:100%;border-collapse:collapse}th{background:#1e3a5f;color:#fff;padding:7px 9px;text-align:left;font-size:11px}td{padding:5px 9px;border-bottom:1px solid #e2e8f0}tr:nth-child(even){background:#f8fafc}@media print{body{padding:0}}</style></head><body><h1>Fastlagte kampe${invitation.title?" — "+invitation.title:""}</h1><p>Genereret ${new Date().toLocaleDateString('da-DK')}</p><table><thead><tr><th>Dato</th><th>Tidspunkt</th><th>Antal</th></tr></thead><tbody>${rows}</tbody></table><script>window.onload=()=>window.print();<\/script></body></html>`;
     const win=window.open('','_blank');if(win){win.document.write(html);win.document.close();}
   };
@@ -1285,7 +1323,7 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
 
   const sel=selCell?{...selCell,can:whoCan(selCell.iso,selCell.block)}:null;
 
-  const toggleHeatId=(id)=>setHeatIds(prev=>{const cur=prev||new Set(acceptedIds);const n=new Set(cur);n.has(id)?n.delete(id):n.add(id);return n;});
+  const toggleHeatId=(id)=>setHeatIds(prev=>{const cur=prev||new Set(submittedAcceptedIds);const n=new Set(cur);n.has(id)?n.delete(id):n.add(id);return n;});
 
   const canDelete=currentUser?.id===invitation.createdById;
   const myResponse=responseFor(invitation,currentUser?.id);
@@ -1321,20 +1359,26 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
   };
 
   /* ── Genbrugte blokke ────────────────────────────────────── */
+  const notYetSubmittedCount=acceptedIds.length-submittedAcceptedIds.length;
   const teamThresholdBlock=(
     <div className="bg-white rounded-2xl border border-slate-200 p-4">
       <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
         <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide flex items-center gap-1.5">
-          <Users size={13}/> Med i beregningen ({scopePlayers.length}/{invitedPlayers.length})
+          <Users size={13}/> Med i beregningen ({scopePlayers.length}/{submittedPlayers.length})
         </span>
         <div className="flex gap-2">
-          <button onClick={()=>setHeatIds(new Set(acceptedIds))} className="text-xs text-blue-600 hover:underline">Vælg alle</button>
+          <button onClick={()=>setHeatIds(new Set(submittedAcceptedIds))} className="text-xs text-blue-600 hover:underline">Vælg alle</button>
           <button onClick={()=>setHeatIds(new Set())} className="text-xs text-blue-600 hover:underline">Fravælg alle</button>
         </div>
       </div>
+      {notYetSubmittedCount>0&&(
+        <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mb-3">
+          {notYetSubmittedCount} accepteret{notYetSubmittedCount===1?"":"e"} spiller{notYetSubmittedCount===1?"":"e"} har endnu ikke indsendt sine tider til <em>denne</em> forespørgsel og tæller derfor ikke med her — se "Indsendelser" nedenfor.
+        </p>
+      )}
       <div className="flex flex-wrap gap-1.5 mb-3">
-        {invitedPlayers.map(pl=>{
-          const on=(heatIds||new Set(acceptedIds)).has(pl.id);
+        {submittedPlayers.map(pl=>{
+          const on=(heatIds||new Set(submittedAcceptedIds)).has(pl.id);
           return(
             <button key={pl.id} onClick={()=>toggleHeatId(pl.id)}
               className={`inline-flex items-center gap-1.5 rounded-full pl-1 pr-2.5 py-0.5 text-xs transition-colors ${on?"bg-blue-100 text-blue-800 ring-1 ring-blue-300":"bg-slate-100 text-slate-400 line-through"}`}>
@@ -1495,10 +1539,10 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
                       <button onClick={()=>{
                           setExpandedBestTimes(prev=>{const n=new Set(prev);n.has(slotKeyStr)?n.delete(slotKeyStr):n.add(slotKeyStr);return n;});
                         }} className="text-xs text-blue-700 hover:underline">{isExpanded?"Skjul":"Vis"}</button>
-                      {matches.some(m=>m.iso===t.iso&&m.block===t.startBlock&&(m.hours||1)===t.hours)
+                      {myMatches.some(m=>m.iso===t.iso&&m.block===t.startBlock&&(m.hours||1)===t.hours)
                         ?<span className="text-xs text-lime-700 font-semibold flex items-center gap-0.5"><CheckCircle2 size={11}/> Fastlagt</span>
                         :canDelete&&!isClosed
-                          ?<button onClick={()=>setMatches(prev=>[...prev,{iso:t.iso,block:t.startBlock,hours:t.hours,count:t.count,players:t.players}])}
+                          ?<button onClick={()=>setMatches(prev=>[...prev,{id:newDocId("matches"),invitationId:invitation.id,iso:t.iso,block:t.startBlock,hours:t.hours,count:t.count,players:t.players}])}
                               className="text-xs bg-lime-600 text-white rounded-lg px-2 py-1 hover:bg-lime-700 font-medium">Fastlæg</button>
                           :null
                       }
@@ -1543,9 +1587,9 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
     <div className="bg-white rounded-2xl border border-slate-200 p-4">
       <div className="flex items-center justify-between mb-3">
         <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide flex items-center gap-1.5">
-          <Calendar size={13} className="text-blue-600"/> Fastlagte kampe ({matches.length})
+          <Calendar size={13} className="text-blue-600"/> Fastlagte kampe ({myMatches.length})
         </div>
-        {matches.length>0&&(
+        {myMatches.length>0&&(
           <div className="flex gap-1.5">
             <button onClick={exportMatchesCSV} className="inline-flex items-center gap-1 text-xs text-green-700 border border-green-200 bg-green-50 hover:bg-green-100 rounded-lg px-2.5 py-1.5 font-medium">
               <FileSpreadsheet size={12}/> Excel
@@ -1556,15 +1600,15 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
           </div>
         )}
       </div>
-      {matches.length===0
+      {myMatches.length===0
         ?<p className="text-sm text-slate-400">{canDelete?<>Ingen kampe fastlagt endnu — klik <strong>Fastlæg</strong> på en af de bedste tider ovenfor.</>:"Ingen kampe fastlagt endnu."}</p>
         :<ul className="space-y-1.5">
-          {matches.map((m,i)=>{
+          {myMatches.map((m,i)=>{
             const k=matchKey(m,i);
             const isExpanded=expandedMatches.has(k);
             const canPlayers=isExpanded?playersForMatch(m):[];
             return(
-              <li key={i} className="bg-lime-50 border border-lime-200 rounded-lg px-3 py-2">
+              <li key={m.id||i} className="bg-lime-50 border border-lime-200 rounded-lg px-3 py-2">
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-sm min-w-0">
                     <span className="text-slate-400 text-xs mr-1">U{getISOWeek(new Date(m.iso))}</span>
@@ -1574,7 +1618,7 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="text-xs font-bold text-lime-700">{m.count}/{invitation.playerIds.length}</span>
                     <button onClick={()=>toggleMatchExpanded(k)} className="text-xs text-blue-700 hover:underline">{isExpanded?"Skjul":"Vis"}</button>
-                    {canDelete&&!isClosed&&<button onClick={()=>setMatches(prev=>prev.filter((_,j)=>j!==i))}
+                    {canDelete&&!isClosed&&<button onClick={()=>setMatches(prev=>prev.filter(x=>x!==m))}
                       className="text-slate-400 hover:text-red-500"><X size={14}/></button>}
                   </div>
                 </div>
@@ -1646,6 +1690,28 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
             </div>
           </div>
         )}
+        {(pendingAcceptPlayers.length>0||myPendingInvitesForThis.length>0)&&(
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-1.5">
+            <div className="text-xs font-semibold text-amber-800 flex items-center gap-1.5">
+              <Bell size={12}/> Inviteret, afventer ({pendingAcceptPlayers.length+myPendingInvitesForThis.length})
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {pendingAcceptPlayers.map(pl=>(
+                <span key={pl.id} className="inline-flex items-center gap-1.5 text-xs bg-white text-amber-700 border border-amber-200 rounded-full pl-1 pr-2 py-1">
+                  <span className="w-5 h-5 rounded-full bg-amber-200 text-amber-800 grid place-items-center text-[9px] font-bold shrink-0 overflow-hidden">{avatarContent(pl)}</span>
+                  {pl.name.split(" ")[0]} <span className="text-amber-400">afventer accept</span>
+                  {canDelete&&!isClosed&&pl.id!==currentUser?.id&&<button onClick={()=>loginAsPlayer(pl)} title="Hjælp med at acceptere/afslå for denne spiller" className="text-amber-400 hover:text-blue-600 ml-0.5"><LogIn size={11}/></button>}
+                </span>
+              ))}
+              {myPendingInvitesForThis.map(inv=>(
+                <span key={inv.id} className="inline-flex items-center gap-1.5 text-xs bg-white text-blue-700 border border-blue-200 rounded-full pl-1 pr-2 py-1">
+                  <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-700 grid place-items-center shrink-0"><Mail size={10}/></span>
+                  {inv.name} <span className="text-blue-400">afventer oprettelse af konto</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
           {invitedPlayers.map(pl=>{
             const submitted=submittedSet.has(pl.id);
@@ -1687,14 +1753,8 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
           <div className="bg-lime-500 h-1.5 rounded-full transition-all"
             style={{width:`${total?Math.round(submittedCount/total*100):0}%`}}/>
         </div>
-        {(pendingAcceptPlayers.length>0||declinedPlayers.length>0)&&(
+        {declinedPlayers.length>0&&(
           <div className="flex flex-wrap gap-1.5 pt-1 border-t border-slate-100">
-            {pendingAcceptPlayers.map(pl=>(
-              <span key={pl.id} className="inline-flex items-center gap-1 text-[10px] bg-amber-50 text-amber-600 border border-amber-100 rounded-full pl-2 pr-1 py-0.5">
-                <Bell size={9}/> {pl.name.split(" ")[0]} afventer accept
-                {canDelete&&!isClosed&&pl.id!==currentUser?.id&&<button onClick={()=>loginAsPlayer(pl)} title="Hjælp med at acceptere/afslå for denne spiller" className="text-amber-400 hover:text-blue-600 ml-0.5"><LogIn size={10}/></button>}
-              </span>
-            ))}
             {declinedPlayers.map(pl=>(
               <span key={pl.id} className="inline-flex items-center gap-1 text-[10px] bg-slate-50 text-slate-400 border border-slate-200 rounded-full px-2 py-0.5 line-through">{pl.name.split(" ")[0]} afslog</span>
             ))}
@@ -1721,7 +1781,7 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
               {!isClosed&&pendingAccept&&<span className="text-[10px] bg-blue-100 text-blue-700 rounded-full px-2 py-0.5 font-semibold shrink-0">Afventer din accept</span>}
               {!isClosed&&declined&&<span className="text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5 font-semibold shrink-0">Afslået</span>}
               {!isClosed&&needsMyResponse&&<span className="text-[10px] bg-amber-100 text-amber-700 rounded-full px-2 py-0.5 font-semibold shrink-0">Kræver din besvarelse</span>}
-              {matches.length>0&&<span className="inline-flex items-center gap-1 text-[10px] bg-lime-50 text-lime-700 rounded-full px-2 py-0.5 shrink-0"><CheckCircle2 size={9}/> {matches.length} kamp{matches.length===1?"":"e"} fastlagt</span>}
+              {myMatches.length>0&&<span className="inline-flex items-center gap-1 text-[10px] bg-lime-50 text-lime-700 rounded-full px-2 py-0.5 shrink-0"><CheckCircle2 size={9}/> {myMatches.length} kamp{myMatches.length===1?"":"e"} fastlagt</span>}
             </div>
             <ReqMeta item={invitation}/>
           </div>
@@ -1980,13 +2040,13 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
 
       {expanded&&!editing&&(
         <div className="px-4 pb-4 space-y-4">
-          {matches.length>0&&(
+          {myMatches.length>0&&(
             <div className="bg-lime-50 border border-lime-200 rounded-xl p-3 space-y-1.5">
               <div className="text-xs font-semibold text-lime-800 uppercase tracking-wide flex items-center gap-1.5">
-                <Calendar size={12}/> Fastlagte kampe ({matches.length})
+                <Calendar size={12}/> Fastlagte kampe ({myMatches.length})
               </div>
               <ul className="space-y-1">
-                {matches.map((m,i)=>{
+                {myMatches.map((m,i)=>{
                   const k=matchKey(m,i);
                   const isExpanded=expandedMatches.has(k);
                   const canPlayers=isExpanded?playersForMatch(m):[];
@@ -3123,6 +3183,12 @@ export default function App(){
   const [drafts,setDrafts]=useFirestoreCollection("drafts",draftsQuery,!!firebaseUser); // kladder — kun mine egne, filtreret i selve Firestore-forespørgslen
   const [openDraftId,setOpenDraftId]=useState(null); // hvilken kladde der skal indlæses i "Opret forespørgsel"
   const [friendRequests,setFriendRequests]=useFirestoreCollection("friendRequests",[],!!firebaseUser);
+  // "Inviter en ny spiller" (mail til nogen uden konto endnu) opretter et "invites"-dokument —
+  // her abonneres realtime på MINE afsendte, stadig ventende invitationer, så de kan vises som
+  // "afventer" både i venlisten og på den forespørgsel, de hører til, i stedet for at forsvinde
+  // fra syne indtil personen rent faktisk opretter en konto (se handleSignup).
+  const myPendingInvitesQuery=useMemo(()=>firebaseUser?[where("invitedByUid","==",firebaseUser.uid),where("status","==","pending")]:[],[firebaseUser?.uid]);
+  const [myPendingInvites]=useFirestoreCollection("invites",myPendingInvitesQuery,!!firebaseUser);
 
   // Delt hold-data der ikke naturligt er "en liste af poster med hvert sit id" gemmes i stedet
   // som ét samlet dokument hver (se useFirestoreDocState) — det matcher den oprindelige
@@ -3266,7 +3332,7 @@ export default function App(){
         <ProfilModal currentUser={currentUser} players={players} setPlayers={setPlayers} avail={avail} baseMonday={baseMonday} onClose={()=>setShowProfil(false)}/>
       )}
       {showFriends&&(
-        <FriendsModal currentUser={currentUser} players={players} friends={friends} friendRequests={friendRequests}
+        <FriendsModal currentUser={currentUser} players={players} friends={friends} friendRequests={friendRequests} myPendingInvites={myPendingInvites}
           onSendRequest={sendFriendRequest} onCancelRequest={cancelFriendRequest} onRemoveFriend={removeFriend} onClose={()=>setShowFriends(false)}/>
       )}
       {showIntro&&<IntroModal onClose={()=>setShowIntro(false)}/>}
@@ -3328,7 +3394,7 @@ export default function App(){
           </div>
         </div>
 
-        {tab==="overblik"&&<KaptajnOverblik players={players} setPlayers={setPlayers} avail={avail} setAvail={setAvail} baseMonday={baseMonday} today={today} setTab={setTab} setActivePlayerId={setActivePlayerId} currentUser={currentUser} invitations={invitations} setInvitations={setInvitations} matches={matches} setMatches={setMatches} lockedPlayers={lockedPlayers} setLockedPlayers={setLockedPlayers} drafts={drafts} setDrafts={setDrafts} setOpenDraftId={setOpenDraftId} friends={friends} setFriends={setFriends} templates={templates} setTemplates={setTemplates} friendRequests={friendRequests} onAcceptFriendRequest={acceptFriendRequest} onDeclineFriendRequest={declineFriendRequest} focusInvitationId={focusInvitationId} setFocusInvitationId={setFocusInvitationId}/>}
+        {tab==="overblik"&&<KaptajnOverblik players={players} setPlayers={setPlayers} avail={avail} setAvail={setAvail} baseMonday={baseMonday} today={today} setTab={setTab} setActivePlayerId={setActivePlayerId} currentUser={currentUser} invitations={invitations} setInvitations={setInvitations} matches={matches} setMatches={setMatches} lockedPlayers={lockedPlayers} setLockedPlayers={setLockedPlayers} drafts={drafts} setDrafts={setDrafts} setOpenDraftId={setOpenDraftId} friends={friends} setFriends={setFriends} templates={templates} setTemplates={setTemplates} friendRequests={friendRequests} myPendingInvites={myPendingInvites} onAcceptFriendRequest={acceptFriendRequest} onDeclineFriendRequest={declineFriendRequest} focusInvitationId={focusInvitationId} setFocusInvitationId={setFocusInvitationId}/>}
         {tab==="forespoergsel"&&<OpretForespoergsel players={players} setPlayers={setPlayers} setAvail={setAvail} currentUser={currentUser} invitations={invitations} setInvitations={setInvitations} today={today} setTab={setTab} drafts={drafts} setDrafts={setDrafts} openDraftId={openDraftId} setOpenDraftId={setOpenDraftId} friends={friends} setFriends={setFriends}/>}
         {tab==="kalender"&&<SpillerKalender currentUser={currentUser} players={players} avail={avail} setAvail={setAvail} invitations={invitations} setInvitations={setInvitations} baseMonday={baseMonday} today={today} activePlayerId={activePlayerId} setActivePlayerId={setActivePlayerId} templates={templates} setTemplates={setTemplates} lockedPlayers={lockedPlayers} setLockedPlayers={setLockedPlayers}/>}
 
