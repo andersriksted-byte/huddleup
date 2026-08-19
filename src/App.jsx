@@ -2432,6 +2432,13 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
   const [weekOffset,setWeekOffset]=useState(0);
   const paintRef=useRef(null);
   const templatePaintRef=useRef(null);
+  // Mobilbrowsere sender ofte en "ghost" mousedown/click lige efter en touch-hændelse.
+  // Uden denne guard bliver en celle først markeret af touchstart og så straks slået fra
+  // igen af den efterfølgende syntetiske mousedown — hvilket set fra brugeren ligner at
+  // markeringen "forsvinder" i det øjeblik man slipper fingeren. lastTouchRef holder styr
+  // på, hvornår vi sidst så en rigtig touch-hændelse, så vi kan ignorere ghost-museklik.
+  const lastTouchRef=useRef(0);
+  const isGhostMouseEvent=()=>Date.now()-lastTouchRef.current<800;
   const [selInvId,setSelInvId]=useState(null);
   // Alle kan nu se/redigere enhver spillers kalender — viewId styres af dropdown/valgt spiller
   const viewId=activePlayerId;
@@ -2641,6 +2648,8 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
   };
   const onCellDown=(d,b)=>{if(!cellEditable(d))return;const val=!isMarked(d,b);paintRef.current=val;applyPaint(d,b,val);};
   const onCellEnter=(d,b)=>{if(paintRef.current===null)return;applyPaint(d,b,paintRef.current);};
+  const onCellTouchStart=(d,b)=>{lastTouchRef.current=Date.now();onCellDown(d,b);};
+  const onCellMouseDown=(d,b)=>{if(isGhostMouseEvent())return;onCellDown(d,b);};
 
   // Tæl markeringer inden for perioden
   const markedInPeriod=invActive?[...marked].filter(k=>{const iso=k.split("|")[0];return iso>=invitation.startIso&&iso<=invitation.endIso;}).length:marked.size;
@@ -2683,7 +2692,7 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
               return(
               <td key={i} className="p-0"><button
                 disabled={past||!editable}
-                onMouseDown={()=>onCellDown(d,b)} onMouseEnter={()=>onCellEnter(d,b)} onTouchStart={()=>onCellDown(d,b)}
+                onMouseDown={()=>onCellMouseDown(d,b)} onMouseEnter={()=>onCellEnter(d,b)} onTouchStart={()=>onCellTouchStart(d,b)}
                 className={`w-full rounded transition-colors ${
                   past?"bg-slate-50 cursor-not-allowed":
                   !editable&&on?"bg-lime-300 cursor-default":
@@ -2817,9 +2826,9 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
                         return(
                         <td key={di} className="p-0">
                           <button type="button"
-                            onMouseDown={(e)=>{e.preventDefault();const val=!template.has(key);templatePaintRef.current=val;setApplyMsg(null);setTemplate(prev=>{const n=new Set(prev);val?n.add(key):n.delete(key);return n;});}}
+                            onMouseDown={(e)=>{e.preventDefault();if(isGhostMouseEvent())return;const val=!template.has(key);templatePaintRef.current=val;setApplyMsg(null);setTemplate(prev=>{const n=new Set(prev);val?n.add(key):n.delete(key);return n;});}}
                             onMouseEnter={()=>{if(templatePaintRef.current===null)return;setTemplate(prev=>{const n=new Set(prev);templatePaintRef.current?n.add(key):n.delete(key);return n;});}}
-                            onTouchStart={(e)=>{e.preventDefault();const val=!template.has(key);templatePaintRef.current=val;setApplyMsg(null);setTemplate(prev=>{const n=new Set(prev);val?n.add(key):n.delete(key);return n;});}}
+                            onTouchStart={(e)=>{lastTouchRef.current=Date.now();const val=!template.has(key);templatePaintRef.current=val;setApplyMsg(null);setTemplate(prev=>{const n=new Set(prev);val?n.add(key):n.delete(key);return n;});}}
                             className={`w-full rounded transition-colors ${on?"bg-blue-600 hover:bg-blue-700":"bg-slate-100 hover:bg-blue-100"}`}
                             style={{height:20}}/>
                         </td>);
