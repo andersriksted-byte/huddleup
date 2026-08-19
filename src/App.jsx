@@ -1704,9 +1704,9 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
                 </span>
               ))}
               {myPendingInvitesForThis.map(inv=>(
-                <span key={inv.id} className="inline-flex items-center gap-1.5 text-xs bg-white text-blue-700 border border-blue-200 rounded-full pl-1 pr-2 py-1">
-                  <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-700 grid place-items-center shrink-0"><Mail size={10}/></span>
-                  {inv.name} <span className="text-blue-400">afventer oprettelse af konto</span>
+                <span key={inv.id} className="inline-flex items-center gap-1.5 text-xs bg-white text-amber-700 border border-amber-200 rounded-full pl-1 pr-2 py-1">
+                  <span className="w-5 h-5 rounded-full bg-amber-200 text-amber-800 grid place-items-center shrink-0"><Mail size={10}/></span>
+                  {inv.name} <span className="text-amber-400">afventer accept</span>
                 </span>
               ))}
             </div>
@@ -2207,6 +2207,10 @@ function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations
   const [currentDraftId,setCurrentDraftId]=useState(null);
   const [draftSaved,setDraftSaved]=useState(false);
   const [showDiscardConfirm,setShowDiscardConfirm]=useState(false);
+  // Genereres allerede nu, så nye spillere man inviterer på mail MENS man opretter forespørgslen
+  // (før man har trykket "Send") kan kobles til den huddle, de rent faktisk hører til, i stedet for
+  // at ende som en "løs" invitation der ikke kan spores tilbage til nogen forespørgsel.
+  const [invId,setInvId]=useState(()=>newDocId("invitations"));
 
   // Indlæs en kladde når man kommer fra "Fortsæt kladde" på Overblik
   useEffect(()=>{
@@ -2225,6 +2229,7 @@ function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations
       setAvatarImage(d.avatarImage||null);
       setAvatarEmoji(d.avatarEmoji||null);
       setCurrentDraftId(d.id);
+      setInvId(d.invitationId||newDocId("invitations"));
     }
     setOpenDraftId(null);
   },[openDraftId]);
@@ -2250,7 +2255,7 @@ function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations
     setInviteErr("");setInviteBusy(true);
     try{
       const inviteId=newDocId("invites");
-      await setDoc(doc(db,"invites",inviteId),{email,name,invitedByUid:currentUser.id,invitedByName:currentUser.name,invitationId:null,createdAt:new Date().toISOString(),status:"pending"});
+      await setDoc(doc(db,"invites",inviteId),{email,name,invitedByUid:currentUser.id,invitedByName:currentUser.name,invitationId:invId,createdAt:new Date().toISOString(),status:"pending"});
       await sendInviteEmail({toEmail:email,toName:name,fromName:currentUser.name,invitationTitle:invTitle.trim(),signupUrl:`${window.location.origin}${import.meta.env.BASE_URL}`});
       setSentInvite({name,email});
       setNewInvName("");setNewInvEmail("");
@@ -2272,7 +2277,7 @@ function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations
     if(!invTitle.trim()||!invStart||!invEnd||invStart>invEnd||invPlayers.size===0)return;
     const responses={};
     invPlayers.forEach(id=>{responses[id]=id===currentUser.id?"accepted":"pending";});
-    setInvitations(prev=>[...prev,{id:newDocId("invitations"),title:invTitle.trim(),description:invDescription.trim(),startIso:invStart,endIso:invEnd,playerIds:[...invPlayers],responses,submitDeadline:invSubmitDeadline,deadline:invDeadline,submittedIds:[],createdById:currentUser.id,createdByName:currentUser.name,avatarImage,avatarEmoji,minPlayers:invMinPlayers,consecHours:invConsecHours,status:"active"}]);
+    setInvitations(prev=>[...prev,{id:invId,title:invTitle.trim(),description:invDescription.trim(),startIso:invStart,endIso:invEnd,playerIds:[...invPlayers],responses,submitDeadline:invSubmitDeadline,deadline:invDeadline,submittedIds:[],createdById:currentUser.id,createdByName:currentUser.name,avatarImage,avatarEmoji,minPlayers:invMinPlayers,consecHours:invConsecHours,status:"active"}]);
     if(currentDraftId)setDrafts(prev=>prev.filter(d=>d.id!==currentDraftId));
     setInvSent(true);
     setTimeout(()=>{setInvSent(false);setTab("overblik");},900);
@@ -2284,6 +2289,7 @@ function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations
     startIso:invStart,endIso:invEnd,submitDeadline:invSubmitDeadline,deadline:invDeadline,
     playerIds:[...invPlayers],minPlayers:invMinPlayers,consecHours:invConsecHours,
     avatarImage,avatarEmoji,createdById:currentUser.id,createdByName:currentUser.name,
+    invitationId:invId,
   });
 
   const saveDraft=()=>{
