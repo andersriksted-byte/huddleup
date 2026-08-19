@@ -120,6 +120,17 @@ function responseFor(inv,playerId){
   if(!inv||!playerId||!inv.playerIds?.includes(playerId))return null;
   return inv.responses?.[playerId]||"accepted";
 }
+// Man kan komme til at have flere "invites"-dokumenter for samme e-mail (fx hvis man sender en
+// invitation igen). De skal kun vises som ÉT afventende kort — vi beholder den seneste.
+function dedupeInvitesByEmail(list){
+  const byEmail=new Map();
+  for(const iv of list||[]){
+    const key=(iv.email||"").trim().toLowerCase();
+    const existing=byEmail.get(key);
+    if(!existing||(iv.createdAt||"")>(existing.createdAt||""))byEmail.set(key,iv);
+  }
+  return[...byEmail.values()];
+}
 
 /* ═══════════════════════════════════════════════════════════
    DELTE KALENDAR-KOMPONENTER
@@ -761,6 +772,9 @@ function FriendsModal({currentUser,players,friends,friendRequests,myPendingInvit
   const myFriends=useMemo(()=>enriched.filter(p=>myFriendIds.has(p.id)),[enriched,myFriendIds]);
   const outgoingRequests=useMemo(()=>(friendRequests||[]).filter(r=>r.fromId===currentUser.id),[friendRequests,currentUser]);
   const outgoingIds=useMemo(()=>new Set(outgoingRequests.map(r=>r.toId)),[outgoingRequests]);
+  // Man kan have sendt invitationen flere gange (fx til samme forespørgsel og igen manuelt) — her
+  // vises kun ét kort pr. e-mail, uanset hvor mange "invites"-dokumenter der reelt findes.
+  const dedupedPendingInvites=useMemo(()=>dedupeInvitesByEmail(myPendingInvites),[myPendingInvites]);
   const searchResults=useMemo(()=>{
     const q=query.trim().toLowerCase();
     if(!q)return[];
@@ -858,11 +872,11 @@ function FriendsModal({currentUser,players,friends,friendRequests,myPendingInvit
               </div>
             </div>
           )}
-          {(myPendingInvites||[]).length>0&&(
+          {dedupedPendingInvites.length>0&&(
             <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1.5">Inviteret — afventer oprettelse af konto ({myPendingInvites.length})</label>
+              <label className="block text-xs font-semibold text-slate-500 mb-1.5">Inviteret — afventer oprettelse af konto ({dedupedPendingInvites.length})</label>
               <div className="space-y-1.5">
-                {myPendingInvites.map(inv=>(
+                {dedupedPendingInvites.map(inv=>(
                   <div key={inv.id} className="flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-lg px-2.5 py-2">
                     <span className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 grid place-items-center shrink-0"><Mail size={12}/></span>
                     <span className="flex-1 min-w-0">
@@ -1240,7 +1254,7 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
   // Folk inviteret via mail til netop denne forespørgsel, som endnu ikke har oprettet en konto
   // (se "Inviter en ny spiller" og handleSignup i App()) — vises som "afventer" ligesom spillere
   // der endnu ikke har accepteret, så de ikke forsvinder ud af syne efter selve invitationen.
-  const myPendingInvitesForThis=useMemo(()=>(myPendingInvites||[]).filter(iv=>iv.invitationId===invitation.id),[myPendingInvites,invitation.id]);
+  const myPendingInvitesForThis=useMemo(()=>dedupeInvitesByEmail((myPendingInvites||[]).filter(iv=>iv.invitationId===invitation.id)),[myPendingInvites,invitation.id]);
 
   // Invitation-periode grænser
   const invMinWeek=useMemo(()=>Math.max(0,Math.round((mondayOf(new Date(invitation.startIso))-baseMonday)/(7*864e5))),[invitation,baseMonday]);
