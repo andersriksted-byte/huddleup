@@ -1,0 +1,54 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Profiler: enhver logget ind bruger må læse alle profiler (for at se navne/billeder på
+    // holdkammerater), men kun redigere sin egen — id'et på dokumentet ER Firebase Auth uid'et.
+    match /profiles/{uid} {
+      allow read: if signedIn();
+      allow write: if signedIn() && request.auth.uid == uid;
+    }
+
+    // Forespørgsler, venneanmodninger: hele holdet er gensidigt betroede samarbejdspartnere
+    // i denne app (alle kan allerede redigere/udfylde hinandens kalendere via UI'et), så alle
+    // loggede-ind brugere må læse og skrive. Kun oprettelse/sletning er ekstra begrænset.
+    match /invitations/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.createdById == request.auth.uid;
+      allow update: if signedIn();
+      allow delete: if signedIn() && resource.data.createdById == request.auth.uid;
+    }
+
+    match /friendRequests/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.fromId == request.auth.uid;
+      allow delete: if signedIn() && (resource.data.fromId == request.auth.uid || resource.data.toId == request.auth.uid);
+    }
+
+    // Kladder er private for den der oprettede dem.
+    match /drafts/{id} {
+      allow read, write: if signedIn() && (
+        (resource == null && request.resource.data.createdById == request.auth.uid) ||
+        (resource != null && resource.data.createdById == request.auth.uid)
+      );
+    }
+
+    // Ventende invitationer til folk uden konto endnu — kun afsenderen skal kunne se/ændre dem
+    // (bortset fra selve claim-processen ved signup, som opdaterer status).
+    match /invites/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.invitedByUid == request.auth.uid;
+      allow update: if signedIn();
+    }
+
+    // Delt hold-data (tilgængelighed, skabeloner, venner, kampe, låste spillere) — samme
+    // gensidigt-betroede model som invitations/friendRequests ovenfor.
+    match /state/{id} {
+      allow read, write: if signedIn();
+    }
+  }
+}
