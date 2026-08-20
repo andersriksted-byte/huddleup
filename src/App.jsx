@@ -6,7 +6,7 @@ import {
   Lock, Eye, EyeOff, LogOut, LogIn, Key, Copy, Shield, Edit2, Check, User, Download, FileSpreadsheet, FileText, MoreVertical,
   Mail, ArrowLeft, RotateCcw
 } from "lucide-react";
-import { where, doc, setDoc, deleteDoc, getDocs, collection, query as fsQuery, arrayUnion, arrayRemove, deleteField } from "firebase/firestore";
+import { where, doc, setDoc, updateDoc, deleteDoc, getDocs, collection, query as fsQuery, arrayUnion, arrayRemove, deleteField } from "firebase/firestore";
 import { db, newDocId } from "./lib/firebase.js";
 import { useAuth } from "./hooks/useAuth.js";
 import { useFirestoreCollection } from "./hooks/useFirestoreCollection.js";
@@ -1120,7 +1120,11 @@ function KaptajnOverblik({players,setPlayers,avail,setAvail,baseMonday,today,set
   // Kladder er kun synlige for den, der er ved at oprette dem
   const myDrafts=useMemo(()=>(drafts||[]).filter(d=>d.createdById===currentUser?.id),[drafts,currentUser]);
   // Indkommende venneanmodninger, der afventer mit svar
-  const incomingFriendRequests=useMemo(()=>(friendRequests||[]).filter(r=>r.toId===currentUser?.id),[friendRequests,currentUser]);
+  // "accepted:true" betyder man allerede har trykket Accepter, men anmodningen står stadig i
+  // Firestore et øjeblik endnu (se acceptFriendRequest i App()) — fordi den var knyttet til en
+  // huddle-kladde der endnu ikke var afsendt, og som selve afsendelsen skal samle den op fra. Den
+  // skal ikke vises som "kræver handling" igen.
+  const incomingFriendRequests=useMemo(()=>(friendRequests||[]).filter(r=>r.toId===currentUser?.id&&!r.accepted),[friendRequests,currentUser]);
 
   // Visningsvalg: Kladde / Aktive / Afsluttede
   const [viewMode,setViewMode]=useState("active");
@@ -2277,7 +2281,7 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
                   </div>
                   <div className="bg-white rounded-lg border border-lime-100 p-3 text-xs text-slate-600 space-y-1">
                     <div><span className="text-slate-400">Til:</span> {editSentInvite.email}</div>
-                    <div className="text-slate-500">{editSentInvite.name} tilføjes automatisk til denne forespørgsel, når invitationen accepteres via signup-linket i mailen.</div>
+                    <div className="text-slate-500">{editSentInvite.name} opretter sin profil via linket i mailen, og skal derefter blot trykke "Accepter" på venneanmodningen på sit Overblik — det tilføjer dem til denne forespørgsel med det samme.</div>
                   </div>
                 </div>
               )}
@@ -2465,12 +2469,16 @@ function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations
   const [playerSearch,setPlayerSearch]=useState("");
   const [newInvName,setNewInvName]=useState("");
   const [newInvEmail,setNewInvEmail]=useState("");
-  const [sentInvite,setSentInvite]=useState(null); // { name, email } — ægte invitationsmail sendt via EmailJS til en ny spiller
-  const [inviteBusy,setInviteBusy]=useState(false);
-  const [inviteErr,setInviteErr]=useState("");
+  // Personer uden konto endnu, tilføjet til DENNE kladde — { name, email }. Der sendes IKKE nogen
+  // mail og oprettes IKKE noget i Firestore her, kun rent lokalt i kladden, indtil man rent faktisk
+  // trykker "Afsend forespørgsel" (se sendInvitation). Ellers risikerer man at personen opretter sin
+  // profil og lander på en tom side, fordi selve huddlen slet ikke er sendt endnu.
+  const [invNewPeople,setInvNewPeople]=useState([]);
   const [currentDraftId,setCurrentDraftId]=useState(null);
   const [draftSaved,setDraftSaved]=useState(false);
   const [showDiscardConfirm,setShowDiscardConfirm]=useState(false);
+  const [sendBusy,setSendBusy]=useState(false);
+  const [sendErr,setSendErr]=useState("");
   // Genereres allerede nu, så nye spillere man inviterer på mail MENS man opretter forespørgslen
   // (før man har trykket "Send") kan kobles til den huddle, de rent faktisk hører til, i stedet for
   // at ende som en "løs" invitation der ikke kan spores tilbage til nogen forespørgsel.
@@ -2494,6 +2502,7 @@ function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations
       setAvatarEmoji(d.avatarEmoji||null);
       setCurrentDraftId(d.id);
       setInvId(d.invitationId||newDocId("invitations"));
+      setInvNewPeople(d.newPeople||[]);
     }
     setOpenDraftId(null);
   },[openDraftId]);
@@ -2510,32 +2519,25 @@ function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations
   const addExistingPlayer=(id)=>{setInvPlayers(prev=>new Set(prev).add(id));setPlayerSearch("");};
   const removeInvited=(id)=>setInvPlayers(prev=>{const n=new Set(prev);n.delete(id);return n;});
 
-  // Folk du allerede har inviteret på mail til netop denne (endnu ikke afsendte) forespørgsel, og
-  // som stadig ikke har oprettet en konto — vist så man kan se hvem der allerede er inviteret, i
-  // stedet for at risikere at invitere samme person to gange eller glemme en undervejs.
-  const invitedForThisDraft=useMemo(()=>dedupeInvitesByEmail((myPendingInvites||[]).filter(iv=>iv.invitationId===invId)),[myPendingInvites,invId]);
-  const cancelInvitedForThisDraft=(email)=>{
-    const key=(email||"").trim().toLowerCase();
-    (myPendingInvites||[]).filter(iv=>iv.invitationId===invId&&(iv.email||"").trim().toLowerCase()===key)
-      .forEach(iv=>onCancelPendingInvite&&onCancelPendingInvite(iv.id));
-  };
-  // Findes e-mailen allerede — enten som oprettet bruger eller som en afventende invitation (til
-  // denne eller en anden forespørgsel/venneliste) — advares der i stedet for at sende igen.
-  // "existing" giver også selve spiller-objektet med, så man har en reel vej videre (send en
-  // venneanmodning knyttet til denne huddle) i stedet for en blind afvisning — se
-  // requestFriendForNewInvEmail nedenfor og kommentaren ved sendFriendRequest i App().
+  // Findes e-mailen allerede — som en oprettet bruger, som en afventende invitation fra en TIDLIGERE
+  // huddle, eller som en person man allerede har tilføjet til DENNE kladde — advares der i stedet
+  // for at tilføje/sende igen. "existing" giver også selve spiller-objektet med, så man har en reel
+  // vej videre (send en venneanmodning knyttet til denne huddle) i stedet for en blind afvisning —
+  // se requestFriendForNewInvEmail nedenfor og kommentaren ved sendFriendRequest i App().
   const newInvEmailMatch=useMemo(()=>{
     const q=newInvEmail.trim().toLowerCase();
     if(!q)return null;
+    if(invNewPeople.some(p=>(p.email||"").trim().toLowerCase()===q))return{type:"queued"};
     if((myPendingInvites||[]).some(iv=>(iv.email||"").trim().toLowerCase()===q))return{type:"pending"};
     const existingPlayer=players.find(p=>(p.email||"").trim().toLowerCase()===q);
     if(existingPlayer)return{type:"existing",player:existingPlayer};
     return null;
-  },[newInvEmail,myPendingInvites,players]);
+  },[newInvEmail,invNewPeople,myPendingInvites,players]);
 
   // Udgående venneanmodninger sendt herfra og knyttet til netop denne (endnu ikke afsendte)
-  // huddle — vises sammen med mail-invitationerne, så man kan se ALT man allerede har sat i gang,
-  // uanset om modtageren havde en konto i forvejen eller ej.
+  // huddle — vises sammen med de lokalt tilføjede personer, så man kan se ALT man allerede har sat
+  // i gang, uanset om modtageren havde en konto i forvejen eller ej. "accepted" betyder personen
+  // allerede har trykket Accepter — de tages med automatisk ved selve afsendelsen (se sendInvitation).
   const pendingFriendReqsForThisDraft=useMemo(()=>(friendRequests||[])
     .filter(r=>r.fromId===currentUser.id&&r.invitationId===invId)
     .map(r=>({...r,player:players.find(p=>p.id===r.toId)}))
@@ -2546,24 +2548,17 @@ function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations
     setNewInvName("");setNewInvEmail("");
   };
 
-  // Se kommentaren ved InvitationCard's inviteNewEditPlayer: opretter ikke en konto med det
-  // samme (kræver en server), men gemmer en ventende invitation + sender en rigtig mail med et
-  // signup-link via EmailJS. Spilleren tilføjes automatisk her, når de selv opretter en konto.
-  const inviteNewPlayer=async()=>{
+  // Tilføjer personen lokalt til kladden — IKKE til Firestore, og der sendes IKKE nogen mail her.
+  // Se kommentaren ved invNewPeople-state'n: det sker først når man rent faktisk afsender huddlen.
+  const addNewPersonToDraft=()=>{
     const name=newInvName.trim(),email=newInvEmail.trim();
     if(!name||!emailValid(email)||newInvEmailMatch)return;
-    setInviteErr("");setInviteBusy(true);
-    try{
-      const inviteId=newDocId("invites");
-      await setDoc(doc(db,"invites",inviteId),{email,name,invitedByUid:currentUser.id,invitedByName:currentUser.name,invitationId:invId,createdAt:new Date().toISOString(),status:"pending"});
-      await sendInviteEmail({toEmail:email,toName:name,fromName:currentUser.name,invitationTitle:invTitle.trim(),signupUrl:buildSignupUrl(email,name,invId)});
-      setSentInvite({name,email});
-      setNewInvName("");setNewInvEmail("");
-    }catch(e){
-      setInviteErr(e.message||"Kunne ikke sende invitationen.");
-    }finally{
-      setInviteBusy(false);
-    }
+    setInvNewPeople(prev=>[...prev,{name,email}]);
+    setNewInvName("");setNewInvEmail("");
+  };
+  const removeNewPersonFromDraft=(email)=>{
+    const key=(email||"").trim().toLowerCase();
+    setInvNewPeople(prev=>prev.filter(p=>(p.email||"").trim().toLowerCase()!==key));
   };
 
   const pickPhoto=async(file)=>{
@@ -2573,14 +2568,50 @@ function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations
   };
   const pickEmoji=(em)=>{setAvatarEmoji(em);setAvatarImage(null);setShowEmojiPicker(false);};
 
-  const sendInvitation=()=>{
-    if(!invTitle.trim()||!invStart||!invEnd||invStart>invEnd||invPlayers.size===0)return;
-    const responses={};
-    invPlayers.forEach(id=>{responses[id]=id===currentUser.id?"accepted":"pending";});
-    setInvitations(prev=>[...prev,{id:invId,title:invTitle.trim(),description:invDescription.trim(),startIso:invStart,endIso:invEnd,playerIds:[...invPlayers],responses,submitDeadline:invSubmitDeadline,deadline:invDeadline,submittedIds:[],createdById:currentUser.id,createdByName:currentUser.name,avatarImage,avatarEmoji,minPlayers:invMinPlayers,consecHours:invConsecHours,status:"active"}]);
-    if(currentDraftId)setDrafts(prev=>prev.filter(d=>d.id!==currentDraftId));
-    setInvSent(true);
-    setTimeout(()=>{setInvSent(false);setTab("overblik");},900);
+  const sendInvitation=async()=>{
+    if(!invTitle.trim()||!invStart||!invEnd||invStart>invEnd||invPlayers.size===0||sendBusy)return;
+    setSendErr("");setSendBusy(true);
+    try{
+      // Saml venner op der allerede har trykket Accepter på en venneanmodning knyttet til denne
+      // huddle, MENS den stadig var en kladde (se acceptFriendRequest i App()) — hentet friskt fra
+      // Firestore (ikke kun lokal state), så vi er sikre på at få dem alle med uanset om de
+      // accepterede mens denne fane var lukket eller ude af sync.
+      const acceptedQ=fsQuery(collection(db,"friendRequests"),where("invitationId","==",invId),where("accepted","==",true));
+      const acceptedSnap=await getDocs(acceptedQ);
+      const acceptedIds=acceptedSnap.docs.map(d=>d.data().toId).filter(Boolean);
+
+      const finalPlayerIds=[...new Set([...invPlayers,...acceptedIds])];
+      const responses={};
+      finalPlayerIds.forEach(id=>{responses[id]=(id===currentUser.id||acceptedIds.includes(id))?"accepted":"pending";});
+
+      // Dokumentet oprettes her for allerførste gang, med den fulde og korrekte spillerliste med det
+      // samme — der er derfor aldrig noget bagefter, der kan overskrive en spiller der allerede er
+      // koblet på.
+      await setDoc(doc(db,"invitations",invId),{id:invId,title:invTitle.trim(),description:invDescription.trim(),startIso:invStart,endIso:invEnd,playerIds:finalPlayerIds,responses,submitDeadline:invSubmitDeadline,deadline:invDeadline,submittedIds:[],createdById:currentUser.id,createdByName:currentUser.name,avatarImage,avatarEmoji,minPlayers:invMinPlayers,consecHours:invConsecHours,status:"active"});
+
+      // De brugte anmodninger har opfyldt deres formål nu — ryd op.
+      await Promise.all(acceptedSnap.docs.map(d=>deleteDoc(doc(db,"friendRequests",d.id)).catch(()=>{})));
+
+      // NU — og først nu — oprettes de ventende invitationer og sendes de rigtige mails til dem
+      // uden konto endnu, alle på samme tid, med invitationen allerede oprettet og klar til dem.
+      await Promise.all(invNewPeople.map(async p=>{
+        try{
+          const inviteId=newDocId("invites");
+          await setDoc(doc(db,"invites",inviteId),{email:p.email,name:p.name,invitedByUid:currentUser.id,invitedByName:currentUser.name,invitationId:invId,createdAt:new Date().toISOString(),status:"pending"});
+          await sendInviteEmail({toEmail:p.email,toName:p.name,fromName:currentUser.name,invitationTitle:invTitle.trim(),signupUrl:buildSignupUrl(p.email,p.name,invId)});
+        }catch(e){
+          console.error(`Kunne ikke sende invitation til ${p.email}:`,e);
+        }
+      }));
+
+      if(currentDraftId)setDrafts(prev=>prev.filter(d=>d.id!==currentDraftId));
+      setInvSent(true);
+      setTimeout(()=>{setInvSent(false);setTab("overblik");},900);
+    }catch(e){
+      setSendErr(e.message||"Kunne ikke afsende forespørgslen. Prøv igen.");
+    }finally{
+      setSendBusy(false);
+    }
   };
 
   const buildDraftPayload=()=>({
@@ -2589,7 +2620,7 @@ function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations
     startIso:invStart,endIso:invEnd,submitDeadline:invSubmitDeadline,deadline:invDeadline,
     playerIds:[...invPlayers],minPlayers:invMinPlayers,consecHours:invConsecHours,
     avatarImage,avatarEmoji,createdById:currentUser.id,createdByName:currentUser.name,
-    invitationId:invId,
+    invitationId:invId,newPeople:invNewPeople,
   });
 
   const saveDraft=()=>{
@@ -2719,19 +2750,19 @@ function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations
           </div>
 
           <div className="border-t border-slate-100 mt-3 pt-3 space-y-2">
-            <div className="text-xs font-medium text-slate-600">Inviter en ny spiller (findes ikke endnu)</div>
-            {(invitedForThisDraft.length>0||pendingFriendReqsForThisDraft.length>0)&&(
+            <div className="text-xs font-medium text-slate-600">Tilføj en ny spiller (findes ikke endnu)</div>
+            {(invNewPeople.length>0||pendingFriendReqsForThisDraft.length>0)&&(
               <div className="space-y-1.5">
-                <p className="text-[11px] text-slate-400">Allerede inviteret til denne forespørgsel, afventer stadig svar:</p>
+                <p className="text-[11px] text-slate-400">Allerede tilføjet til denne forespørgsel:</p>
                 <div className="space-y-1">
-                  {invitedForThisDraft.map(inv=>(
-                    <div key={`mail-${inv.id}`} className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5">
+                  {invNewPeople.map(p=>(
+                    <div key={`new-${p.email}`} className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5">
                       <span className="w-5 h-5 rounded-full bg-amber-200 text-amber-800 grid place-items-center shrink-0"><Mail size={10}/></span>
                       <span className="flex-1 min-w-0">
-                        <span className="block text-xs text-slate-700 truncate">{inv.name}</span>
-                        <span className="block text-[10px] text-slate-400 truncate">{inv.email} — opretter endnu ikke konto</span>
+                        <span className="block text-xs text-slate-700 truncate">{p.name}</span>
+                        <span className="block text-[10px] text-slate-400 truncate">{p.email} — får en mail, når du afsender forespørgslen</span>
                       </span>
-                      <button type="button" onClick={()=>cancelInvitedForThisDraft(inv.email)} title="Fortryd invitation" className="text-slate-400 hover:text-red-500 shrink-0"><X size={13}/></button>
+                      <button type="button" onClick={()=>removeNewPersonFromDraft(p.email)} title="Fjern" className="text-slate-400 hover:text-red-500 shrink-0"><X size={13}/></button>
                     </div>
                   ))}
                   {pendingFriendReqsForThisDraft.map(req=>(
@@ -2739,9 +2770,11 @@ function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations
                       <span className="w-5 h-5 rounded-full bg-amber-200 text-amber-800 grid place-items-center shrink-0"><UserPlus size={10}/></span>
                       <span className="flex-1 min-w-0">
                         <span className="block text-xs text-slate-700 truncate">{req.player?.name||"Ukendt spiller"}</span>
-                        <span className="block text-[10px] text-slate-400 truncate">Har allerede en konto — afventer accept af venneanmodning</span>
+                        <span className="block text-[10px] text-slate-400 truncate">
+                          {req.accepted?"Har accepteret — tilføjes automatisk, når du afsender forespørgslen":"Har allerede en konto — afventer accept af venneanmodning"}
+                        </span>
                       </span>
-                      <button type="button" onClick={()=>onCancelFriendRequest&&onCancelFriendRequest(req.id)} title="Fortryd anmodning" className="text-slate-400 hover:text-red-500 shrink-0"><X size={13}/></button>
+                      {!req.accepted&&<button type="button" onClick={()=>onCancelFriendRequest&&onCancelFriendRequest(req.id)} title="Fortryd anmodning" className="text-slate-400 hover:text-red-500 shrink-0"><X size={13}/></button>}
                     </div>
                   ))}
                 </div>
@@ -2752,15 +2785,17 @@ function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations
                 className="flex-1 min-w-28 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
               <input type="email" placeholder="E-mail" value={newInvEmail} onChange={e=>setNewInvEmail(e.target.value)}
                 className="flex-1 min-w-36 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
-              <button type="button" onClick={inviteNewPlayer} disabled={inviteBusy||!newInvName.trim()||!emailValid(newInvEmail)||!!newInvEmailMatch}
+              <button type="button" onClick={addNewPersonToDraft} disabled={!newInvName.trim()||!emailValid(newInvEmail)||!!newInvEmailMatch}
                 className="inline-flex items-center gap-1.5 bg-blue-700 text-white text-sm font-medium rounded-lg px-3 py-2 disabled:opacity-40 hover:bg-blue-800">
-                <UserPlus size={14}/> {inviteBusy?"Sender…":"Inviter"}
+                <UserPlus size={14}/> Tilføj
               </button>
             </div>
-            {newInvEmailMatch?.type==="pending"&&<p className="text-xs text-amber-600 font-medium">Denne e-mail er allerede inviteret og afventer stadig svar.</p>}
+            <p className="text-[11px] text-slate-400">Mailen sendes først, når du trykker "Afsend forespørgsel" nedenfor — så risikerer man ikke at spilleren opretter sig, før huddlen rent faktisk findes.</p>
+            {newInvEmailMatch?.type==="queued"&&<p className="text-xs text-amber-600 font-medium">Allerede tilføjet til denne forespørgsel.</p>}
+            {newInvEmailMatch?.type==="pending"&&<p className="text-xs text-amber-600 font-medium">Denne e-mail er allerede inviteret (til en anden forespørgsel) og afventer stadig svar.</p>}
             {newInvEmailMatch?.type==="existing"&&(
               pendingFriendReqsForThisDraft.some(r=>r.toId===newInvEmailMatch.player.id)
-                ?<p className="text-xs text-amber-600 font-medium">{newInvEmailMatch.player.name} har allerede en konto — venneanmodning sendt, afventer accept (se listen ovenfor).</p>
+                ?<p className="text-xs text-amber-600 font-medium">{newInvEmailMatch.player.name} har allerede en konto — venneanmodning sendt (se listen ovenfor).</p>
                 :(
                   <div className="flex items-center justify-between gap-2 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5">
                     <p className="text-xs text-amber-700">{newInvEmailMatch.player.name} har allerede en Huddleup-konto, men er ikke din ven endnu.</p>
@@ -2770,19 +2805,6 @@ function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations
                     </button>
                   </div>
                 )
-            )}
-            {inviteErr&&<p className="text-xs text-red-500 font-medium">{inviteErr}</p>}
-            {sentInvite&&(
-              <div className="border border-lime-200 bg-lime-50 rounded-xl p-3 space-y-2">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="text-xs font-semibold text-lime-800 flex items-center gap-1.5"><CheckCircle2 size={13}/> Invitation sendt til {sentInvite.name}</div>
-                  <button onClick={()=>setSentInvite(null)} className="text-lime-600 hover:text-lime-800 shrink-0"><X size={14}/></button>
-                </div>
-                <div className="bg-white rounded-lg border border-lime-100 p-3 text-xs text-slate-600 space-y-1">
-                  <div><span className="text-slate-400">Til:</span> {sentInvite.email}</div>
-                  <div className="text-slate-500">{sentInvite.name} tilføjes automatisk til denne forespørgsel, når de opretter deres konto via linket i mailen.</div>
-                </div>
-              </div>
             )}
           </div>
         </div>
@@ -2827,12 +2849,13 @@ function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations
               className="sm:order-2 inline-flex items-center justify-center gap-2 bg-white border border-blue-200 text-blue-700 font-semibold text-sm rounded-xl py-2.5 px-4 disabled:opacity-40 hover:bg-blue-50 transition-colors">
               {draftSaved?<><CheckCircle2 size={16}/> Kladde gemt!</>:<>Gem kladde</>}
             </button>
-            <button onClick={sendInvitation} disabled={!invTitle.trim()||!invStart||!invEnd||invStart>invEnd||invPlayers.size===0}
+            <button onClick={sendInvitation} disabled={sendBusy||!invTitle.trim()||!invStart||!invEnd||invStart>invEnd||invPlayers.size===0}
               className="sm:order-3 flex-1 inline-flex items-center justify-center gap-2 bg-blue-700 text-white font-semibold text-sm rounded-xl py-2.5 disabled:opacity-40 hover:bg-blue-800 transition-colors">
-              {invSent?<><CheckCircle2 size={16}/> Forespørgsel sendt!</>:<><Send size={16}/> Afsend forespørgsel</>}
+              {invSent?<><CheckCircle2 size={16}/> Forespørgsel sendt!</>:sendBusy?<>Sender…</>:<><Send size={16}/> Afsend forespørgsel</>}
             </button>
           </div>
         )}
+        {sendErr&&<p className="text-xs text-red-500 font-medium text-right">{sendErr}</p>}
       </div>
     </div>
   );
@@ -3595,17 +3618,28 @@ export default function App(){
   // derfor er immune over for den race, uanset hvad ens egen lokale kopi indeholder.
   const acceptFriendRequest=(reqId)=>{
     const req=(friendRequests||[]).find(r=>r.id===reqId);
-    if(req){
-      setDoc(doc(db,"state/friends"),{byPlayer:{[req.fromId]:arrayUnion(req.toId),[req.toId]:arrayUnion(req.fromId)}},{merge:true})
-        .catch(e=>console.error("Kunne ikke gemme venskabet:",e));
+    if(!req)return;
+    setDoc(doc(db,"state/friends"),{byPlayer:{[req.fromId]:arrayUnion(req.toId),[req.toId]:arrayUnion(req.fromId)}},{merge:true})
+      .catch(e=>console.error("Kunne ikke gemme venskabet:",e));
+    if(req.invitationId){
       // Anmodningen hørte til en bestemt huddle (se sendFriendRequest) — så snart venskabet er
-      // bekræftet, tilføjes man med det samme, uden et ekstra klik, ligesom ved direkte mail-invitationer.
-      // Samme atomare setDoc/merge som i handleSignup — IKKE setInvitations(prev=>prev.map(...)) —
-      // så det virker uanset om "invitations" er nået at blive indlæst lokalt endnu.
-      if(req.invitationId){
-        setDoc(doc(db,"invitations",req.invitationId),{playerIds:arrayUnion(req.toId),responses:{[req.toId]:"accepted"}},{merge:true})
-          .catch(e=>console.error("Kunne ikke tilføje til forespørgslen:",e));
-      }
+      // bekræftet, skal man med det samme kunne se huddlen, uden et ekstra klik. MEN: er huddlen
+      // stadig kun en kladde (endnu ikke afsendt af kaptajnen), findes "invitations"-dokumentet
+      // ikke i Firestore endnu — updateDoc fejler så med vilje (den opretter IKKE et nyt/ufuldstændigt
+      // dokument, i modsætning til setDoc+merge). I det tilfælde beholder vi IKKE bare stille en
+      // fejl: anmodningen markeres i stedet som "accepted" og bliver stående, så selve afsendelsen
+      // (se sendInvitation) kan samle alle sådanne accepterede anmodninger op og tage dem med fra
+      // den allerførste skrivning af dokumentet. Sådan er der ALDRIG noget bagefter der kan
+      // overskrive/slette en spiller der allerede har sagt ja — den præcise fejl der blev rapporteret.
+      updateDoc(doc(db,"invitations",req.invitationId),{playerIds:arrayUnion(req.toId),[`responses.${req.toId}`]:"accepted"})
+        .then(()=>{
+          // Huddlen var allerede afsendt — formålet med anmodningen er opfyldt, ryd den op.
+          deleteDoc(doc(db,"friendRequests",reqId)).catch(()=>{});
+        })
+        .catch(()=>{
+          setDoc(doc(db,"friendRequests",reqId),{accepted:true},{merge:true}).catch(()=>{});
+        });
+      return;
     }
     setFriendRequests(prev=>prev.filter(r=>r.id!==reqId));
   };
@@ -3691,9 +3725,11 @@ export default function App(){
 
   // Selvbetjent oprettelse af profil fra login-siden. Bagefter tjekkes om der findes én eller
   // flere "ventende invitationer" (oprettet via "Inviter en ny spiller" andre steder i appen) til
-  // netop denne e-mailadresse — er der det, bliver man automatisk ven med den der inviterede, og
-  // (hvis invitationen hørte til en bestemt forespørgsel) tilføjet direkte til den forespørgsel.
-  // Det er sådan "inviter en spiller der ikke findes endnu" fungerer uden en Admin SDK/server.
+  // netop denne e-mailadresse — er der det, oprettes en RIGTIG venneanmodning fra den der
+  // inviterede. Ligesom for eksisterende brugere (se acceptFriendRequest) skal den nye spiller selv
+  // trykke "Accepter" på sit Overblik — ét klik, som bekræfter både venskabet OG (hvis anmodningen
+  // hørte til en bestemt forespørgsel) giver adgang til selve huddlen. Det er bevidst IKKE
+  // automatisk: samme mekanisme bruges for alle, uanset om man havde en konto i forvejen eller ej.
   //
   // huddleId (valgfrit): kommer fra invitations-linket (?huddle=..., se buildSignupUrl) og er
   // selve invitations-ID'et — IKKE bare en e-mail. Den bruges som et ekstra, mere robust opslag:
@@ -3702,7 +3738,6 @@ export default function App(){
   // huddle) via dette ID. Det er linket der hænger sammen med forespørgslen, ikke e-mailen.
   const handleSignup=async({name,email,phone,password,avatarEmoji,avatarImage,huddleId})=>{
     const user=await signUp({name,email,phone,password,avatarEmoji,avatarImage});
-    let attachedHuddleId=null;
     try{
       const byEmailQ=fsQuery(collection(db,"invites"),where("email","==",email.trim()),where("status","==","pending"));
       const byEmailSnap=await getDocs(byEmailQ);
@@ -3717,47 +3752,21 @@ export default function App(){
       for(const inviteDoc of inviteDocs.values()){
         const inv=inviteDoc.data();
         if(inv.invitedByUid){
-          // Atomar arrayUnion i stedet for setFriends — se den store kommentar ved
-          // acceptFriendRequest ovenfor for hvorfor: ellers kan denne skrivning i sjældne
-          // tilfælde overskrive en anden samtidig ændring af det delte "state/friends"-dokument.
-          setDoc(doc(db,"state/friends"),{byPlayer:{[inv.invitedByUid]:arrayUnion(user.uid),[user.uid]:arrayUnion(inv.invitedByUid)}},{merge:true})
-            .catch(e=>console.error("Kunne ikke gemme venskabet:",e));
-        }
-        if(inv.invitationId){
-          // Man behøver ikke aktivt "acceptere" en huddle, man selv blev direkte inviteret til på
-          // mail — den skal bare stå klar med det samme, så man kan gå i gang med at markere sin
-          // tilgængelighed uden et ekstra klik først.
-          //
-          // VIGTIGT: skrives direkte til Firestore med setDoc(...,{merge:true}) — IKKE via
-          // setInvitations(prev=>prev.map(...)). Lige efter signUp() er "invitations"-collection'en
-          // typisk slet ikke nået at blive hentet endnu i denne helt nye session (den aktiveres
-          // først når firebaseUser-state'n er opdateret, hvilket sker asynkront et øjeblik senere) —
-          // så "prev" ville være en tom liste, .map ville ikke finde nogen match, og tilføjelsen
-          // ville stille og roligt intet gøre. Det var netop det, der gjorde at nyoprettede spillere
-          // ikke landede i forespørgslen. arrayUnion/merge virker uafhængigt af, hvad der (endnu)
-          // er indlæst lokalt.
-          await setDoc(doc(db,"invitations",inv.invitationId),{playerIds:arrayUnion(user.uid),responses:{[user.uid]:"accepted"}},{merge:true})
-            .catch(e=>console.error("Kunne ikke tilføje til forespørgslen:",e));
-          attachedHuddleId=inv.invitationId;
+          // Oprettes af DEN NYE bruger selv (det er jo dem der lige er logget ind, ikke den
+          // oprindelige afsender) — se firestore.rules, hvor "friendRequests"-create bevidst
+          // tillader begge parter, netop for at gøre dette muligt uden en Admin SDK/server.
+          await setDoc(doc(db,"friendRequests",newDocId("friendRequests")),{
+            fromId:inv.invitedByUid,toId:user.uid,
+            ...(inv.invitationId?{invitationId:inv.invitationId}:{}),
+          }).catch(e=>console.error("Kunne ikke oprette venneanmodningen:",e));
         }
         await setDoc(doc(db,"invites",inviteDoc.id),{...inv,status:"claimed"});
-      }
-      // Selvom der (mod forventning) ikke fandtes en matchende "invites"-post — fx hvis den allerede
-      // var markeret som "claimed" af en tidligere fejlslagen forsøg — sørger vi alligevel for at
-      // koble kontoen på huddlen, fordi linket i sig selv er beviset for at invitationen er ægte.
-      if(huddleId&&!attachedHuddleId){
-        await setDoc(doc(db,"invitations",huddleId),{playerIds:arrayUnion(user.uid),responses:{[user.uid]:"accepted"}},{merge:true})
-          .catch(e=>console.error("Kunne ikke tilføje til forespørgslen:",e));
-        attachedHuddleId=huddleId;
       }
     }catch(e){
       // En fejl her må ikke blokere selve kontooprettelsen — den er allerede gennemført.
       console.error("Kunne ikke afgøre ventende invitationer ved oprettelse:",e);
     }
     setTab("overblik");
-    // Hop direkte til den huddle man kom fra, så man lander lige der man skal — uden selv at skulle
-    // lede den frem igen blandt evt. andre forespørgsler.
-    if(attachedHuddleId)setFocusInvitationId(attachedHuddleId);
   };
 
   // Firebase Auth sender selv en rigtig nulstillings-mail med et link — ingen EmailJS nødvendig her.
@@ -3769,7 +3778,7 @@ export default function App(){
   // Hooks skal altid kaldes uanset login-status, derfor står de her — FØR det tidlige return nedenfor.
   const notifications=useMemo(()=>{
     const list=[];
-    (friendRequests||[]).filter(r=>r.toId===currentUser?.id).forEach(r=>{
+    (friendRequests||[]).filter(r=>r.toId===currentUser?.id&&!r.accepted).forEach(r=>{
       const p=players.find(pl=>pl.id===r.fromId);
       list.push({key:`friend-${r.id}`,type:"friend",label:p?.name||"Ukendt spiller",sub:"Vil gerne være venner"});
     });
