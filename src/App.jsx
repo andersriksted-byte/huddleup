@@ -108,15 +108,20 @@ function fmtSubmittedAt(iso){
 // forespørgselskort og af kladdelisten, så de to ser eksakt ens ud. Felter der ikke er sat endnu
 // (fx en kladde uden svarfrist) beholder deres label, blot uden værdi efter kolonet — linjen
 // forsvinder ikke, og hvert "Label: værdi"-par knækker aldrig midt i teksten (whitespace-nowrap).
-function ReqMeta({item}){
+function ReqMeta({item,pendingInviteCount=0}){
   const minPlayers=item.minPlayers;
   const consecHours=item.consecHours||1;
   // Kladder har endnu ikke spillere med et reelt svar-/indsendelsesstatus (de felter findes kun
   // på en forespørgsel, der faktisk er afsendt — se "status:'active'" i sendInvitation) — så
   // badges for accept/indsendelse vises kun for rigtige, afsendte forespørgsler.
   const isSentInvitation=item.status==="active";
-  const total=item.playerIds?.length||0;
+  // "Inviteret i alt" tæller også folk, der endnu ikke har en konto og derfor stadig kun findes
+  // som en afventende mail-invitation (se pendingInviteCount/myPendingInvitesForThis) — ellers
+  // ville brevet fx vise "2/2" i stedet for det reelle "2/10", indtil alle otte har oprettet sig.
+  const total=(item.playerIds?.length||0)+pendingInviteCount;
   const acceptedCount=isSentInvitation?(item.playerIds||[]).filter(id=>responseFor(item,id)==="accepted").length:0;
+  // Indsendelse kan kun ske EFTER accept — så den tælles ud af dem der har accepteret, ikke ud
+  // af alle inviterede (se "Indsendelser"-blokken inde på selve kortet, som bruger samme logik).
   const submittedCount=isSentInvitation?(item.submittedIds||[]).length:0;
   return(
     <>
@@ -132,11 +137,11 @@ function ReqMeta({item}){
       </div>
       {isSentInvitation&&total>0&&(
         <div className="flex items-center gap-1.5 mt-1.5">
-          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-full px-2 py-0.5" title={`${acceptedCount} af ${total} har accepteret invitationen`}>
+          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-full px-2 py-0.5" title={`${acceptedCount} af ${total} inviterede har accepteret invitationen`}>
             <Mail size={11}/> {acceptedCount}/{total}
           </span>
-          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-full px-2 py-0.5" title={`${submittedCount} af ${total} har indsendt deres tider`}>
-            <Send size={11}/> {submittedCount}/{total}
+          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-full px-2 py-0.5" title={`${submittedCount} af ${acceptedCount} der har accepteret, har indsendt deres tider`}>
+            <Send size={11}/> {submittedCount}/{acceptedCount}
           </span>
         </div>
       )}
@@ -2067,7 +2072,7 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
               {!isClosed&&needsMyResponse&&<span className="inline-flex items-center gap-1 text-xs bg-amber-500 text-white rounded-full px-2.5 py-1 font-bold shrink-0"><Bell size={11}/> Besvar</span>}
               {myMatches.length>0&&<span className="inline-flex items-center gap-1 text-[10px] bg-lime-50 text-lime-700 rounded-full px-2 py-0.5 shrink-0"><CheckCircle2 size={9}/> {myMatches.length} kamp{myMatches.length===1?"":"e"} fastlagt</span>}
             </div>
-            <ReqMeta item={invitation}/>
+            <ReqMeta item={invitation} pendingInviteCount={myPendingInvitesForThis.length}/>
           </div>
         </button>
         <div className="flex items-center gap-1 shrink-0">
