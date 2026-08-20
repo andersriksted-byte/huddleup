@@ -135,22 +135,50 @@ function dedupeInvitesByEmail(list){
 /* ═══════════════════════════════════════════════════════════
    DELTE KALENDAR-KOMPONENTER
 ═══════════════════════════════════════════════════════════ */
-function WeekNav({weekOffset,setWeekOffset,weekDates}){
+// Når man bladrer uge for uge gennem en afgrænset periode (fx en huddles 13 uger), viser denne
+// en lille proceslinje — én blok pr. uge i perioden — så det er tydeligt hvor langt man er, i
+// stedet for at det føles som endeløs scrolling. minWeek/maxWeek er valgfrie: er de ikke sat
+// (fri browsing uden en bestemt periode), vises linjen slet ikke.
+function WeekProgress({weekOffset,setWeekOffset,minWeek,maxWeek}){
+  if(minWeek==null||maxWeek==null||maxWeek<minWeek)return null;
+  const total=maxWeek-minWeek+1;
+  const currentIdx=Math.min(Math.max(weekOffset,minWeek),maxWeek)-minWeek;
+  return(
+    <div className="mb-2.5">
+      <div className="text-[10px] text-slate-400 font-medium mb-1 text-center">Uge {currentIdx+1} af {total}</div>
+      <div className="flex gap-0.5">
+        {Array.from({length:total},(_,i)=>{
+          const w=minWeek+i;
+          const isCurrent=i===currentIdx;
+          const isDone=i<currentIdx;
+          return(
+            <button key={w} type="button" onClick={()=>setWeekOffset(w)} title={`Uge ${i+1} af ${total}`}
+              className={`flex-1 h-1.5 rounded-full transition-colors ${isCurrent?"bg-blue-700":isDone?"bg-blue-300":"bg-slate-200 hover:bg-slate-300"}`}/>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+function WeekNav({weekOffset,setWeekOffset,weekDates,minWeek,maxWeek}){
   const ws=weekDates[0],we=weekDates[6];
   return(
-    <div className="flex items-center justify-between gap-2 mb-2">
-      <button onClick={()=>setWeekOffset(o=>Math.max(0,o-1))} disabled={weekOffset===0}
-        className="inline-flex items-center gap-1 text-sm font-medium text-slate-600 disabled:opacity-30 hover:bg-slate-100 rounded-lg px-2.5 py-1.5">
-        <ChevronLeft size={16}/> Forrige
-      </button>
-      <div className="text-center">
-        <div className="text-sm font-bold text-blue-900">{fmtShort(ws)} – {fmtShort(we)}</div>
-        <div className="text-xs text-slate-400">Uge {getISOWeek(ws)}{weekOffset===0?" · denne uge":""}</div>
+    <div className="mb-2">
+      <WeekProgress weekOffset={weekOffset} setWeekOffset={setWeekOffset} minWeek={minWeek} maxWeek={maxWeek}/>
+      <div className="flex items-center justify-between gap-2">
+        <button onClick={()=>setWeekOffset(o=>Math.max(0,o-1))} disabled={weekOffset===0}
+          className="inline-flex items-center gap-1 text-sm font-medium text-slate-600 disabled:opacity-30 hover:bg-slate-100 rounded-lg px-2.5 py-1.5">
+          <ChevronLeft size={16}/> Forrige
+        </button>
+        <div className="text-center">
+          <div className="text-sm font-bold text-blue-900">{fmtShort(ws)} – {fmtShort(we)}</div>
+          <div className="text-xs text-slate-400">Uge {getISOWeek(ws)}{weekOffset===0?" · denne uge":""}</div>
+        </div>
+        <button onClick={()=>setWeekOffset(o=>Math.min(HORIZON_WEEKS-1,o+1))} disabled={weekOffset===HORIZON_WEEKS-1}
+          className="inline-flex items-center gap-1 text-sm font-medium text-slate-600 disabled:opacity-30 hover:bg-slate-100 rounded-lg px-2.5 py-1.5">
+          Næste <ChevronRight size={16}/>
+        </button>
       </div>
-      <button onClick={()=>setWeekOffset(o=>Math.min(HORIZON_WEEKS-1,o+1))} disabled={weekOffset===HORIZON_WEEKS-1}
-        className="inline-flex items-center gap-1 text-sm font-medium text-slate-600 disabled:opacity-30 hover:bg-slate-100 rounded-lg px-2.5 py-1.5">
-        Næste <ChevronRight size={16}/>
-      </button>
     </div>
   );
 }
@@ -1503,7 +1531,7 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
 
   const calendarGridBlock=(
     <div className="bg-white rounded-2xl border border-slate-200 p-4">
-      <WeekNav weekOffset={weekOffset} setWeekOffset={setWeekOffsetClamped} weekDates={weekDates}/>
+      <WeekNav weekOffset={weekOffset} setWeekOffset={setWeekOffsetClamped} weekDates={weekDates} minWeek={invMinWeek} maxWeek={invMaxWeek}/>
       <div className="overflow-x-auto">
         <table className="w-full border-separate" style={{borderSpacing:"3px 2px",tableLayout:"fixed"}}>
           <thead><tr><th className="w-16"/>
@@ -3072,7 +3100,7 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
       {/* Kalender — kun synlig når man redigerer en anden spillers kalender eller når der er en aktiv invitation */}
       {(!editingSelf||hasInvitation)&&(
         <div className="bg-white rounded-2xl border border-slate-200 p-4">
-          <WeekNav weekOffset={weekOffset} setWeekOffset={setWeekOffsetClamped} weekDates={weekDates}/>
+          <WeekNav weekOffset={weekOffset} setWeekOffset={setWeekOffsetClamped} weekDates={weekDates} minWeek={invActive?invMinWeek:undefined} maxWeek={invActive?invMaxWeek:undefined}/>
           {renderWeekGrid(visibleDates,false)}
           <div className="flex items-center gap-3 mt-2 text-xs text-slate-500 flex-wrap">
             <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-lime-500 inline-block"/> Vil spille</span>
@@ -3411,8 +3439,11 @@ export default function App(){
           }));
         }
         if(inv.invitationId){
+          // Man behøver ikke aktivt "acceptere" en huddle, man selv blev direkte inviteret til på
+          // mail — den skal bare stå klar med det samme, så man kan gå i gang med at markere sin
+          // tilgængelighed uden et ekstra klik først.
           setInvitations(prev=>prev.map(x=>x.id===inv.invitationId
-            ?{...x,playerIds:[...new Set([...x.playerIds,user.uid])],responses:{...(x.responses||{}),[user.uid]:"pending"}}
+            ?{...x,playerIds:[...new Set([...x.playerIds,user.uid])],responses:{...(x.responses||{}),[user.uid]:"accepted"}}
             :x));
         }
         await setDoc(doc(db,"invites",inviteDoc.id),{...inv,status:"claimed"});
