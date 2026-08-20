@@ -3600,10 +3600,11 @@ export default function App(){
         .catch(e=>console.error("Kunne ikke gemme venskabet:",e));
       // Anmodningen hørte til en bestemt huddle (se sendFriendRequest) — så snart venskabet er
       // bekræftet, tilføjes man med det samme, uden et ekstra klik, ligesom ved direkte mail-invitationer.
+      // Samme atomare setDoc/merge som i handleSignup — IKKE setInvitations(prev=>prev.map(...)) —
+      // så det virker uanset om "invitations" er nået at blive indlæst lokalt endnu.
       if(req.invitationId){
-        setInvitations(prev=>prev.map(x=>x.id===req.invitationId
-          ?{...x,playerIds:[...new Set([...x.playerIds,req.toId])],responses:{...(x.responses||{}),[req.toId]:"accepted"}}
-          :x));
+        setDoc(doc(db,"invitations",req.invitationId),{playerIds:arrayUnion(req.toId),responses:{[req.toId]:"accepted"}},{merge:true})
+          .catch(e=>console.error("Kunne ikke tilføje til forespørgslen:",e));
       }
     }
     setFriendRequests(prev=>prev.filter(r=>r.id!==reqId));
@@ -3726,9 +3727,17 @@ export default function App(){
           // Man behøver ikke aktivt "acceptere" en huddle, man selv blev direkte inviteret til på
           // mail — den skal bare stå klar med det samme, så man kan gå i gang med at markere sin
           // tilgængelighed uden et ekstra klik først.
-          setInvitations(prev=>prev.map(x=>x.id===inv.invitationId
-            ?{...x,playerIds:[...new Set([...x.playerIds,user.uid])],responses:{...(x.responses||{}),[user.uid]:"accepted"}}
-            :x));
+          //
+          // VIGTIGT: skrives direkte til Firestore med setDoc(...,{merge:true}) — IKKE via
+          // setInvitations(prev=>prev.map(...)). Lige efter signUp() er "invitations"-collection'en
+          // typisk slet ikke nået at blive hentet endnu i denne helt nye session (den aktiveres
+          // først når firebaseUser-state'n er opdateret, hvilket sker asynkront et øjeblik senere) —
+          // så "prev" ville være en tom liste, .map ville ikke finde nogen match, og tilføjelsen
+          // ville stille og roligt intet gøre. Det var netop det, der gjorde at nyoprettede spillere
+          // ikke landede i forespørgslen. arrayUnion/merge virker uafhængigt af, hvad der (endnu)
+          // er indlæst lokalt.
+          await setDoc(doc(db,"invitations",inv.invitationId),{playerIds:arrayUnion(user.uid),responses:{[user.uid]:"accepted"}},{merge:true})
+            .catch(e=>console.error("Kunne ikke tilføje til forespørgslen:",e));
           attachedHuddleId=inv.invitationId;
         }
         await setDoc(doc(db,"invites",inviteDoc.id),{...inv,status:"claimed"});
@@ -3737,9 +3746,8 @@ export default function App(){
       // var markeret som "claimed" af en tidligere fejlslagen forsøg — sørger vi alligevel for at
       // koble kontoen på huddlen, fordi linket i sig selv er beviset for at invitationen er ægte.
       if(huddleId&&!attachedHuddleId){
-        setInvitations(prev=>prev.map(x=>x.id===huddleId
-          ?{...x,playerIds:[...new Set([...x.playerIds,user.uid])],responses:{...(x.responses||{}),[user.uid]:"accepted"}}
-          :x));
+        await setDoc(doc(db,"invitations",huddleId),{playerIds:arrayUnion(user.uid),responses:{[user.uid]:"accepted"}},{merge:true})
+          .catch(e=>console.error("Kunne ikke tilføje til forespørgslen:",e));
         attachedHuddleId=huddleId;
       }
     }catch(e){
