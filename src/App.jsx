@@ -111,6 +111,13 @@ function fmtSubmittedAt(iso){
 function ReqMeta({item}){
   const minPlayers=item.minPlayers;
   const consecHours=item.consecHours||1;
+  // Kladder har endnu ikke spillere med et reelt svar-/indsendelsesstatus (de felter findes kun
+  // på en forespørgsel, der faktisk er afsendt — se "status:'active'" i sendInvitation) — så
+  // badges for accept/indsendelse vises kun for rigtige, afsendte forespørgsler.
+  const isSentInvitation=item.status==="active";
+  const total=item.playerIds?.length||0;
+  const acceptedCount=isSentInvitation?(item.playerIds||[]).filter(id=>responseFor(item,id)==="accepted").length:0;
+  const submittedCount=isSentInvitation?(item.submittedIds||[]).length:0;
   return(
     <>
       <div className="text-xs text-slate-400 mt-0.5">Oprettet af {item.createdByName||"ukendt"}</div>
@@ -123,6 +130,16 @@ function ReqMeta({item}){
         <span className="whitespace-nowrap">Planlægning afsluttes: <span className="font-medium text-slate-800">{item.deadline?fmtShort(new Date(item.deadline)):""}</span> <span className="text-slate-300">·</span></span>
         <span className="whitespace-nowrap">Krav: <span className="font-medium text-slate-800">{minPlayers?`min. ${minPlayers} spillere, ${consecHours} time${consecHours===1?"":"r"} i træk`:""}</span></span>
       </div>
+      {isSentInvitation&&total>0&&(
+        <div className="flex items-center gap-1.5 mt-1.5">
+          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-full px-2 py-0.5" title={`${acceptedCount} af ${total} har accepteret invitationen`}>
+            <Mail size={11}/> {acceptedCount}/{total}
+          </span>
+          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-full px-2 py-0.5" title={`${submittedCount} af ${total} har indsendt deres tider`}>
+            <Send size={11}/> {submittedCount}/{total}
+          </span>
+        </div>
+      )}
     </>
   );
 }
@@ -1120,7 +1137,7 @@ function FriendsModal({currentUser,players,friends,friendRequests,myPendingInvit
 /* ═══════════════════════════════════════════════════════════
    KAPTAJNENS OVERBLIK
 ═══════════════════════════════════════════════════════════ */
-function KaptajnOverblik({players,setPlayers,avail,setAvail,baseMonday,today,setTab,setActivePlayerId,currentUser,invitations,setInvitations,matches,setMatches,lockedPlayers,setLockedPlayers,drafts,setDrafts,setOpenDraftId,friends,setFriends,templates,setTemplates,friendRequests,myPendingInvites,onCancelPendingInvite,onAcceptFriendRequest,onDeclineFriendRequest,onSendFriendRequest,onCancelFriendRequest,focusInvitationId,setFocusInvitationId}){
+function KaptajnOverblik({players,setPlayers,avail,setAvail,baseMonday,today,setTab,setActivePlayerId,currentUser,invitations,setInvitations,matches,setMatches,lockedPlayers,setLockedPlayers,drafts,setDrafts,setOpenDraftId,friends,setFriends,templates,setTemplates,friendRequests,myPendingInvites,onCancelPendingInvite,onAcceptFriendRequest,onDeclineFriendRequest,onSendFriendRequest,onCancelFriendRequest,focusInvitationId,setFocusInvitationId,collapseAllSignal}){
   const updateInvitation=(id,fn)=>setInvitations(prev=>prev.map(inv=>inv.id===id?fn(inv):inv));
   const deleteInvitation=(id)=>setInvitations(prev=>prev.filter(inv=>inv.id!==id));
 
@@ -1271,7 +1288,7 @@ function KaptajnOverblik({players,setPlayers,avail,setAvail,baseMonday,today,set
             invitations={invitations} setInvitations={setInvitations} templates={templates} setTemplates={setTemplates} setDrafts={setDrafts} setOpenDraftId={setOpenDraftId}
             myPendingInvites={myPendingInvites} onCancelPendingInvite={onCancelPendingInvite}
             friendRequests={friendRequests} onSendFriendRequest={onSendFriendRequest} onCancelFriendRequest={onCancelFriendRequest}
-            focusInvitationId={focusInvitationId} setFocusInvitationId={setFocusInvitationId}/>
+            focusInvitationId={focusInvitationId} setFocusInvitationId={setFocusInvitationId} collapseAllSignal={collapseAllSignal}/>
         ))
       )}
     </div>
@@ -1281,7 +1298,7 @@ function KaptajnOverblik({players,setPlayers,avail,setAvail,baseMonday,today,set
 /* ═══════════════════════════════════════════════════════════
    FORESPØRGSELS-RUBRIK (én pr. anmodning)
 ═══════════════════════════════════════════════════════════ */
-function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday,today,setTab,setActivePlayerId,currentUser,matches,setMatches,updateInvitation,deleteInvitation,lockedPlayers,setLockedPlayers,friends,setFriends,invitations,setInvitations,templates,setTemplates,setDrafts,setOpenDraftId,myPendingInvites,onCancelPendingInvite,friendRequests,onSendFriendRequest,onCancelFriendRequest,focusInvitationId,setFocusInvitationId}){
+function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday,today,setTab,setActivePlayerId,currentUser,matches,setMatches,updateInvitation,deleteInvitation,lockedPlayers,setLockedPlayers,friends,setFriends,invitations,setInvitations,templates,setTemplates,setDrafts,setOpenDraftId,myPendingInvites,onCancelPendingInvite,friendRequests,onSendFriendRequest,onCancelFriendRequest,focusInvitationId,setFocusInvitationId,collapseAllSignal}){
   const [weekOffset,setWeekOffset]=useState(0);
   // Standardværdier hentes fra forespørgslens egne indstillinger (sat da den blev oprettet)
   const [threshold,setThreshold]=useState(invitation.minPlayers||Math.max(4,Math.floor(players.length*0.7)));
@@ -1313,6 +1330,14 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
     if(el)el.scrollIntoView({behavior:"smooth",block:"start"});
     if(setFocusInvitationId)setFocusInvitationId(null);
   },[focusInvitationId,invitation.id]);
+
+  // Klik på "HuddleUp"-titlen: fold alle kort sammen igen, så man kommer tilbage til et fuldt
+  // overblik. collapseAllSignal tælles op ved hvert klik — se App().
+  const isFirstCollapseSignal=useRef(true);
+  useEffect(()=>{
+    if(isFirstCollapseSignal.current){isFirstCollapseSignal.current=false;return;}
+    setExpanded(false);
+  },[collapseAllSignal]);
 
   // Hjælp en anden spiller med at udfylde sin kalender — direkte inline på dette kort, uden at
   // logge ind som dem eller forlade siden. Man beholder selv sin fulde adgang til forespørgslen.
@@ -3838,6 +3863,9 @@ export default function App(){
   },[friendRequests,invitations,players,currentUser]);
   const [notifOpen,setNotifOpen]=useState(false);
   const [focusInvitationId,setFocusInvitationId]=useState(null);
+  // Tælles op hver gang man klikker på "HuddleUp"-titlen — hvert enkelt forespørgselskort lytter
+  // efter en ændring her og folder sig selv sammen igen, se InvitationCard.
+  const [collapseAllSignal,setCollapseAllSignal]=useState(0);
   const goToNotification=(n)=>{
     setNotifOpen(false);
     setTab("overblik");
@@ -3874,9 +3902,11 @@ export default function App(){
       <div className="max-w-3xl mx-auto space-y-4">
         {/* Header */}
         <div className="flex items-center justify-between gap-3">
-          <h1 className="flex items-center gap-2 text-xl font-bold" style={{color:"#32376E"}}>
+          <button type="button" onClick={()=>{setTab("overblik");setCollapseAllSignal(v=>v+1);}}
+            title="Tilbage til fuldt overblik"
+            className="flex items-center gap-2 text-xl font-bold hover:opacity-80 transition-opacity" style={{color:"#32376E"}}>
             <LogoIcon size={30}/> HuddleUp
-          </h1>
+          </button>
           <div className="flex items-center gap-2">
             <div className="relative">
               <button onClick={()=>setNotifOpen(v=>!v)} title={notifications.length>0?`${notifications.length} afventer dig`:"Ingen nye notifikationer"}
@@ -3919,7 +3949,7 @@ export default function App(){
 
         {/* Overblikket er nu det faste billede — der navigeres ikke længere til det via en fane.
             "Opret Huddle" åbnes i stedet som et vindue ovenpå, se nedenfor. */}
-        <KaptajnOverblik players={players} setPlayers={setPlayers} avail={avail} setAvail={setAvail} baseMonday={baseMonday} today={today} setTab={setTab} setActivePlayerId={setActivePlayerId} currentUser={currentUser} invitations={invitations} setInvitations={setInvitations} matches={matches} setMatches={setMatches} lockedPlayers={lockedPlayers} setLockedPlayers={setLockedPlayers} drafts={drafts} setDrafts={setDrafts} setOpenDraftId={setOpenDraftId} friends={friends} setFriends={setFriends} templates={templates} setTemplates={setTemplates} friendRequests={friendRequests} myPendingInvites={myPendingInvites} onCancelPendingInvite={cancelPendingInvite} onAcceptFriendRequest={acceptFriendRequest} onDeclineFriendRequest={declineFriendRequest} onSendFriendRequest={sendFriendRequest} onCancelFriendRequest={cancelFriendRequest} focusInvitationId={focusInvitationId} setFocusInvitationId={setFocusInvitationId}/>
+        <KaptajnOverblik players={players} setPlayers={setPlayers} avail={avail} setAvail={setAvail} baseMonday={baseMonday} today={today} setTab={setTab} setActivePlayerId={setActivePlayerId} currentUser={currentUser} invitations={invitations} setInvitations={setInvitations} matches={matches} setMatches={setMatches} lockedPlayers={lockedPlayers} setLockedPlayers={setLockedPlayers} drafts={drafts} setDrafts={setDrafts} setOpenDraftId={setOpenDraftId} friends={friends} setFriends={setFriends} templates={templates} setTemplates={setTemplates} friendRequests={friendRequests} myPendingInvites={myPendingInvites} onCancelPendingInvite={cancelPendingInvite} onAcceptFriendRequest={acceptFriendRequest} onDeclineFriendRequest={declineFriendRequest} onSendFriendRequest={sendFriendRequest} onCancelFriendRequest={cancelFriendRequest} focusInvitationId={focusInvitationId} setFocusInvitationId={setFocusInvitationId} collapseAllSignal={collapseAllSignal}/>
         {tab==="forespoergsel"&&(
           <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-4">
             <div className="bg-slate-50 rounded-2xl shadow-2xl w-full max-w-2xl p-4 sm:p-6" style={{maxHeight:"90vh",overflowY:"auto"}}>
