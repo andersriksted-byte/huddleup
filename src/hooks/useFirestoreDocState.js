@@ -12,7 +12,7 @@ import { db } from "../lib/firebase.js";
 // toFirestore/fromFirestore konverterer til/fra noget Firestore kan gemme (JSON-agtige typer —
 // Firestore forstår ikke JS Set, så fx {playerId: Set([...])}-objekter serialiseres til
 // {playerId: [...]} og tilbage igen automatisk her.
-export function useFirestoreDocState(path, defaultValue, { toFirestore, fromFirestore } = {}) {
+export function useFirestoreDocState(path, defaultValue, { toFirestore, fromFirestore, onError } = {}) {
   const [value, setValue] = useState(defaultValue);
   const latestRef = useRef(value);
   latestRef.current = value;
@@ -38,12 +38,12 @@ export function useFirestoreDocState(path, defaultValue, { toFirestore, fromFire
         }
         pendingRef.current = [];
         const payload = toFirestore ? toFirestore(next) : next;
-        setDoc(doc(db, path), payload).catch((e) => console.error("Gem fejlede:", e));
+        setDoc(doc(db, path), payload).catch((e) => { console.error("Gem fejlede:", e); onError?.(e); });
       }
       loadedRef.current = true;
       latestRef.current = next;
       setValue(next);
-    }, (err) => console.error(`Firestore-fejl (${path}):`, err));
+    }, (err) => { console.error(`Firestore-fejl (${path}):`, err); onError?.(err); });
     return unsub;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path]);
@@ -60,8 +60,8 @@ export function useFirestoreDocState(path, defaultValue, { toFirestore, fromFire
       return;
     }
     const payload = toFirestore ? toFirestore(next) : next;
-    setDoc(doc(db, path), payload).catch((e) => console.error("Gem fejlede:", e));
-  }, [path, toFirestore]);
+    setDoc(doc(db, path), payload).catch((e) => { console.error("Gem fejlede:", e); onError?.(e); });
+  }, [path, toFirestore, onError]);
 
   return [value, setValueAndSync];
 }
@@ -77,7 +77,7 @@ export function useFirestoreDocState(path, defaultValue, { toFirestore, fromFire
 // samtidig fra to steder" — i modsætning til før, hvor enhver skrivning kunne ramme alle spilleres
 // data på én gang. Det er netop den brede overskrivning, der gentagne gange har slettet spilleres
 // kalendere i denne app.
-export function useFirestorePartitionedMap(path, { toItem, fromItem } = {}) {
+export function useFirestorePartitionedMap(path, { toItem, fromItem, onError } = {}) {
   const [byKey, setByKey] = useState({});
   const latestRef = useRef({});
   const loadedRef = useRef(false);
@@ -101,14 +101,14 @@ export function useFirestorePartitionedMap(path, { toItem, fromItem } = {}) {
         for (const { key } of pendingRef.current) {
           const payloadVal = toItem ? toItem(next[key]) : next[key];
           setDoc(doc(db, path), { byPlayer: { [key]: payloadVal } }, { merge: true })
-            .catch((e) => console.error("Gem fejlede:", e));
+            .catch((e) => { console.error("Gem fejlede:", e); onError?.(e); });
         }
         pendingRef.current = [];
       }
       loadedRef.current = true;
       latestRef.current = next;
       setByKey(next);
-    }, (err) => console.error(`Firestore-fejl (${path}):`, err));
+    }, (err) => { console.error(`Firestore-fejl (${path}):`, err); onError?.(err); });
     return unsub;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path]);
@@ -125,8 +125,8 @@ export function useFirestorePartitionedMap(path, { toItem, fromItem } = {}) {
     }
     const payloadVal = toItem ? toItem(nextVal) : nextVal;
     setDoc(doc(db, path), { byPlayer: { [key]: payloadVal } }, { merge: true })
-      .catch((e) => console.error("Gem fejlede:", e));
-  }, [path, toItem]);
+      .catch((e) => { console.error("Gem fejlede:", e); onError?.(e); });
+  }, [path, toItem, onError]);
 
   return [byKey, setKeyValue];
 }

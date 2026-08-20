@@ -4,7 +4,7 @@ import {
   CheckCircle2, Info, Users, Sparkles, UserPlus,
   Trash2, Send, Bell, X, Calendar, ChevronDown,
   Lock, Eye, EyeOff, LogOut, LogIn, Key, Copy, Shield, Edit2, Check, User, Download, FileSpreadsheet, FileText, MoreVertical,
-  Mail, ArrowLeft, RotateCcw
+  Mail, ArrowLeft, RotateCcw, AlertTriangle
 } from "lucide-react";
 import { where, doc, setDoc, updateDoc, deleteDoc, getDocs, collection, query as fsQuery, arrayUnion, arrayRemove, deleteField } from "firebase/firestore";
 import { db, newDocId } from "./lib/firebase.js";
@@ -1142,7 +1142,7 @@ function FriendsModal({currentUser,players,friends,friendRequests,myPendingInvit
 /* ═══════════════════════════════════════════════════════════
    KAPTAJNENS OVERBLIK
 ═══════════════════════════════════════════════════════════ */
-function KaptajnOverblik({players,setPlayers,avail,setAvail,baseMonday,today,setTab,setActivePlayerId,currentUser,invitations,setInvitations,matches,setMatches,lockedPlayers,setLockedPlayers,drafts,setDrafts,setOpenDraftId,friends,setFriends,templates,setTemplates,friendRequests,myPendingInvites,onCancelPendingInvite,onAcceptFriendRequest,onDeclineFriendRequest,onSendFriendRequest,onCancelFriendRequest,focusInvitationId,setFocusInvitationId,collapseAllSignal}){
+function KaptajnOverblik({players,setPlayers,avail,setAvail,baseMonday,today,setTab,currentUser,invitations,setInvitations,matches,setMatches,lockedPlayers,setLockedPlayers,drafts,setDrafts,setOpenDraftId,friends,setFriends,templates,setTemplates,friendRequests,myPendingInvites,onCancelPendingInvite,onAcceptFriendRequest,onDeclineFriendRequest,onSendFriendRequest,onCancelFriendRequest,focusInvitationId,setFocusInvitationId,collapseAllSignal}){
   const updateInvitation=(id,fn)=>setInvitations(prev=>prev.map(inv=>inv.id===id?fn(inv):inv));
   const deleteInvitation=(id)=>setInvitations(prev=>prev.filter(inv=>inv.id!==id));
 
@@ -1288,7 +1288,7 @@ function KaptajnOverblik({players,setPlayers,avail,setAvail,baseMonday,today,set
       ):(
         shownInvitations.map(inv=>(
           <InvitationCard key={inv.id} invitation={inv} players={players} setPlayers={setPlayers} avail={avail} setAvail={setAvail} baseMonday={baseMonday} today={today}
-            setTab={setTab} setActivePlayerId={setActivePlayerId} currentUser={currentUser} matches={matches} setMatches={setMatches}
+            setTab={setTab} currentUser={currentUser} matches={matches} setMatches={setMatches}
             updateInvitation={updateInvitation} deleteInvitation={deleteInvitation} lockedPlayers={lockedPlayers} setLockedPlayers={setLockedPlayers} friends={friends} setFriends={setFriends}
             invitations={invitations} setInvitations={setInvitations} templates={templates} setTemplates={setTemplates} setDrafts={setDrafts} setOpenDraftId={setOpenDraftId}
             myPendingInvites={myPendingInvites} onCancelPendingInvite={onCancelPendingInvite}
@@ -1303,7 +1303,7 @@ function KaptajnOverblik({players,setPlayers,avail,setAvail,baseMonday,today,set
 /* ═══════════════════════════════════════════════════════════
    FORESPØRGSELS-RUBRIK (én pr. anmodning)
 ═══════════════════════════════════════════════════════════ */
-function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday,today,setTab,setActivePlayerId,currentUser,matches,setMatches,updateInvitation,deleteInvitation,lockedPlayers,setLockedPlayers,friends,setFriends,invitations,setInvitations,templates,setTemplates,setDrafts,setOpenDraftId,myPendingInvites,onCancelPendingInvite,friendRequests,onSendFriendRequest,onCancelFriendRequest,focusInvitationId,setFocusInvitationId,collapseAllSignal}){
+function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday,today,setTab,currentUser,matches,setMatches,updateInvitation,deleteInvitation,lockedPlayers,setLockedPlayers,friends,setFriends,invitations,setInvitations,templates,setTemplates,setDrafts,setOpenDraftId,myPendingInvites,onCancelPendingInvite,friendRequests,onSendFriendRequest,onCancelFriendRequest,focusInvitationId,setFocusInvitationId,collapseAllSignal}){
   const [weekOffset,setWeekOffset]=useState(0);
   // Standardværdier hentes fra forespørgslens egne indstillinger (sat da den blev oprettet)
   const [threshold,setThreshold]=useState(invitation.minPlayers||Math.max(4,Math.floor(players.length*0.7)));
@@ -2439,7 +2439,6 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
             <div className="border border-blue-200 rounded-2xl overflow-hidden">
               <SpillerKalender currentUser={currentUser} players={players} avail={avail} setAvail={setAvail}
                 invitations={invitations} setInvitations={setInvitations} baseMonday={baseMonday} today={today}
-                activePlayerId={currentUser.id} setActivePlayerId={setActivePlayerId}
                 templates={templates} setTemplates={setTemplates}
                 lockedPlayers={lockedPlayers} setLockedPlayers={setLockedPlayers} lockedInvitationId={invitation.id}/>
             </div>
@@ -2472,7 +2471,6 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
               ):(
                 <SpillerKalender currentUser={helpingPlayer} players={players} avail={avail} setAvail={setAvail}
                   invitations={invitations} setInvitations={setInvitations} baseMonday={baseMonday} today={today}
-                  activePlayerId={helpingPlayerId} setActivePlayerId={()=>{}}
                   templates={templates} setTemplates={setTemplates}
                   lockedPlayers={lockedPlayers} setLockedPlayers={setLockedPlayers} lockedInvitationId={invitation.id}/>
               )}
@@ -2912,7 +2910,7 @@ function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations
 /* ═══════════════════════════════════════════════════════════
    SPILLERENS KALENDER
 ═══════════════════════════════════════════════════════════ */
-function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvitations,baseMonday,today,activePlayerId,setActivePlayerId,templates,setTemplates,lockedPlayers,setLockedPlayers,lockedInvitationId}){
+function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvitations,baseMonday,today,templates,setTemplates,lockedPlayers,setLockedPlayers,lockedInvitationId}){
   const [weekOffset,setWeekOffset]=useState(0);
   const paintRef=useRef(null);
   const templatePaintRef=useRef(null);
@@ -2924,8 +2922,10 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
   const lastTouchRef=useRef(0);
   const isGhostMouseEvent=()=>Date.now()-lastTouchRef.current<800;
   const [selInvId,setSelInvId]=useState(null);
-  // Alle kan nu se/redigere enhver spillers kalender — viewId styres af dropdown/valgt spiller
-  const viewId=activePlayerId;
+  // Denne komponent viser/redigerer altid currentUser's egen kalender — enten fordi det bogstaveligt
+  // ER den indloggede spiller (standalone "Kalender"-fane / "Udfyld egen kalender"), eller fordi
+  // currentUser er byttet ud med den hjulpne spiller (se "hjælp en anden spiller"-flowet).
+  const viewId=currentUser.id;
   // Template gemmes per spiller i App-state så det overlever fane-skift
   const template=(templates&&viewId&&templates[viewId])||new Set();
   const setTemplate=(fn)=>{
@@ -3003,9 +3003,16 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
     setApplyMsg(`Kopieret fra "${archInv.title||"tidligere besvarelse"}" til kladde.`);
   };
 
-  // Er der en valgt anmodning for denne spiller (og ser vi på vores egen kalender)?
+  // Er der en valgt anmodning for denne spiller? BEMÆRK: afhænger bevidst IKKE af editingSelf —
+  // "Alle kan se/redigere enhver spillers kalender" (se viewId ovenfor), og periode-begrænsningen
+  // her, samt indsendt/låst-beskyttelsen nedenfor (isSubmitted/canEdit), SKAL gælde uanset hvem der
+  // sidder og redigerer. Da invActive tidligere krævede editingSelf, blev en allerede indsendt og
+  // låst kalender IKKE beskyttet, når man redigerede en anden spillers kalender via spiller-
+  // vælgeren (i modsætning til via "hjælp en anden spiller", hvor editingSelf altid er sand) — med
+  // det resultat at "Ryd alt"-knappen (beregnet til en aktiv, IKKE-låst kalender uden invitation)
+  // stod aktiv og kunne slette en allerede indsendt kalender fuldstændig, uden varsel.
   const hasInvitation=!!invitation;
-  const invActive=hasInvitation&&editingSelf; // begrænser navigation + redigering
+  const invActive=hasInvitation; // begrænser navigation + redigering
 
   // Ugeoffsets for den anmodede periode
   const invMinWeek=useMemo(()=>invActive?Math.max(0,Math.round((mondayOf(new Date(invitation.startIso))-baseMonday)/(7*864e5))):0,[invActive,invitation,baseMonday]);
@@ -3014,7 +3021,6 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
   // Hop til periodens start når anmodning vælges/aktiveres
   useEffect(()=>{
     if(invActive){setWeekOffset(invMinWeek);}
-    else if(hasInvitation&&!editingSelf){const wo=Math.round((mondayOf(new Date(invitation.startIso))-baseMonday)/(7*864e5));setWeekOffset(Math.max(0,Math.min(HORIZON_WEEKS-1,wo)));}
   },[player?.id,invActive,invMinWeek,baseMonday,invitation?.id]);
 
   // Begrænset navigation når anmodning er aktiv
@@ -3046,9 +3052,18 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
   // availKey(). Skift af forespørgsel (selInvId/lockedInvitationId) skifter derfor reelt til en
   // helt anden, uafhængig kalender.
   const marked=avail[availKey(invitation?.id,player.id)]||new Set();
-  const isSubmitted=editingSelf&&!!(lockedPlayers?.has(player.id)||(invitation?.submittedIds?.includes(player.id)));
-  const submitDeadlinePassed=editingSelf&&!!(invitation?.submitDeadline&&isoDate(today)>invitation.submitDeadline);
-  const canEdit=(!editingSelf||(!isSubmitted&&!submitDeadlinePassed));
+  // isSubmitted/submitDeadlinePassed er bevidst IKKE gated bag editingSelf — se kommentaren ved
+  // invActive ovenfor. En allerede indsendt/låst kalender skal vises korrekt (låst) uanset hvem
+  // der kigger på den.
+  const isSubmitted=!!(lockedPlayers?.has(player.id)||(invitation?.submittedIds?.includes(player.id)));
+  const submitDeadlinePassed=!!(invitation?.submitDeadline&&isoDate(today)>invitation.submitDeadline);
+  // canEdit KRÆVER derimod editingSelf — det er bevidst den eneste vej til reelt at ændre en
+  // anden spillers kalender: enten er det bogstaveligt ens egen, eller også sker det via "hjælp en
+  // anden spiller" (som bytter currentUser til den hjulpne spiller og derved gør editingSelf sand).
+  // Spiller-vælgeren i den almindelige Kalender-fane må gerne bruges til at SE enhver spillers
+  // kalender, men skal aldrig kunne redigere den — det var netop den vej, der tidligere manglede
+  // beskyttelse mod at ændre/slette en allerede indsendt kalender.
+  const canEdit=(editingSelf&&!isSubmitted&&!submitDeadlinePassed);
 
   const setMarked=(fn)=>{
     if(!canEdit)return;
@@ -3217,20 +3232,6 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
             }
           </div>
         </div>
-        {!lockedInvitationId&&players.length>1&&(
-          <div className="relative">
-            <select value={player.id} onChange={e=>setActivePlayerId(e.target.value)}
-              className="appearance-none bg-white/20 text-white text-sm rounded-lg pl-3 pr-8 py-2 border border-white/30 focus:outline-none cursor-pointer">
-              {players.map(pl=><option key={pl.id} value={pl.id} className="text-slate-800 bg-white">{pl.name}</option>)}
-            </select>
-            <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-white/70 pointer-events-none"/>
-          </div>
-        )}
-        {!editingSelf&&(
-          <span className="text-[11px] bg-amber-400/20 text-amber-300 border border-amber-400/30 rounded-lg px-2 py-1 flex items-center gap-1">
-            <Shield size={11}/> Redigerer en anden spillers kalender
-          </span>
-        )}
       </div>
 
       {/* Flere forespørgsler til denne spiller */}
@@ -3608,8 +3609,6 @@ export default function App(){
 
   const [showProfil,setShowProfil]=useState(false);
   const [tab,setTab]=useState("overblik");
-  const [activePlayerId,setActivePlayerId]=useState(null);
-  useEffect(()=>{ if(currentUser?.id)setActivePlayerId(currentUser.id); },[currentUser?.id]);
 
   // Alt app-data hentes nu realtime fra Firestore i stedet for at ligge i lokal React-state —
   // derfor er data permanent og synkront delt mellem alle brugere. "enabled: !!firebaseUser"
@@ -3642,13 +3641,24 @@ export default function App(){
   // den strukturelle rettelse af den gentagne "kalenderdata forsvinder"-fejl: uanset hvad denne
   // browser-fane tilfældigvis har liggende lokalt om ANDRE spilleres data, kan en skrivning her
   // aldrig røre ved dem.
-  const [avail,setAvail]=useFirestorePartitionedMap("state/availability",{toItem:setItemToFirestore,fromItem:setItemFromFirestore});
-  const [templates,setTemplates]=useFirestorePartitionedMap("state/templates",{toItem:setItemToFirestore,fromItem:setItemFromFirestore});
+  // Synlig fejlbesked hvis en gemning til Firestore fejler (fx tabt forbindelse) — UDEN denne ville
+  // brugeren ikke kunne se det: skærmen viser stadig ens egne (lokale, optimistiske) markeringer
+  // fint, selvom skrivningen aldrig nåede serveren, og først når siden senere synkroniserer med den
+  // ægte (uændrede) serverdata forsvinder markeringerne igen, tilsyneladende uden grund.
+  const saveErrorTimeoutRef=useRef(null);
+  const [saveError,setSaveError]=useState(null);
+  const handleSaveError=()=>{
+    setSaveError("Kunne ikke gemme ændringen – tjek din internetforbindelse og prøv igen. Genindlæs siden for en sikkerheds skyld, når forbindelsen er tilbage.");
+    if(saveErrorTimeoutRef.current)clearTimeout(saveErrorTimeoutRef.current);
+    saveErrorTimeoutRef.current=setTimeout(()=>setSaveError(null),12000);
+  };
+  const [avail,setAvail]=useFirestorePartitionedMap("state/availability",{toItem:setItemToFirestore,fromItem:setItemFromFirestore,onError:handleSaveError});
+  const [templates,setTemplates]=useFirestorePartitionedMap("state/templates",{toItem:setItemToFirestore,fromItem:setItemFromFirestore,onError:handleSaveError});
   // Venner: pr. bruger en liste af spiller-id'er man er blevet venner med (gensidigt) — kun venner
   // kan findes/tilføjes til en forespørgsel via søgning, så man ikke ser hele spillerlisten i systemet.
-  const [friends,setFriends]=useFirestoreDocState("state/friends",{},{toFirestore:plainMapToFirestore,fromFirestore:plainMapFromFirestore});
-  const [matches,setMatches]=useFirestoreDocState("state/matches",[],{toFirestore:listToFirestore,fromFirestore:listFromFirestore});
-  const [lockedPlayers,setLockedPlayers]=useFirestoreDocState("state/lockedPlayers",new Set(),{toFirestore:setToFirestore,fromFirestore:setFromFirestore});
+  const [friends,setFriends]=useFirestoreDocState("state/friends",{},{toFirestore:plainMapToFirestore,fromFirestore:plainMapFromFirestore,onError:handleSaveError});
+  const [matches,setMatches]=useFirestoreDocState("state/matches",[],{toFirestore:listToFirestore,fromFirestore:listFromFirestore,onError:handleSaveError});
+  const [lockedPlayers,setLockedPlayers]=useFirestoreDocState("state/lockedPlayers",new Set(),{toFirestore:setToFirestore,fromFirestore:setFromFirestore,onError:handleSaveError});
 
   const [showFriends,setShowFriends]=useState(false);
   const [showIntro,setShowIntro]=useState(false); // "Introduktion til funktionerne" — trin-for-trin guide fra profilmenuen
@@ -3904,6 +3914,12 @@ export default function App(){
       )}
       {showIntro&&<IntroModal onClose={()=>setShowIntro(false)}/>}
       {showDeleteProfile&&<DeleteProfileModal onConfirm={handleDeleteProfile} onClose={()=>setShowDeleteProfile(false)}/>}
+      {saveError&&(
+        <div className="fixed top-0 inset-x-0 z-50 bg-red-600 text-white text-sm font-medium px-4 py-2.5 flex items-center justify-center gap-2 text-center shadow-md">
+          <AlertTriangle size={16} className="shrink-0"/> {saveError}
+          <button onClick={()=>setSaveError(null)} className="ml-1 shrink-0 opacity-80 hover:opacity-100"><X size={16}/></button>
+        </div>
+      )}
       <div className="max-w-3xl mx-auto space-y-4">
         {/* Header */}
         <div className="flex items-center justify-between gap-3">
@@ -3954,7 +3970,7 @@ export default function App(){
 
         {/* Overblikket er nu det faste billede — der navigeres ikke længere til det via en fane.
             "Opret Huddle" åbnes i stedet som et vindue ovenpå, se nedenfor. */}
-        <KaptajnOverblik players={players} setPlayers={setPlayers} avail={avail} setAvail={setAvail} baseMonday={baseMonday} today={today} setTab={setTab} setActivePlayerId={setActivePlayerId} currentUser={currentUser} invitations={invitations} setInvitations={setInvitations} matches={matches} setMatches={setMatches} lockedPlayers={lockedPlayers} setLockedPlayers={setLockedPlayers} drafts={drafts} setDrafts={setDrafts} setOpenDraftId={setOpenDraftId} friends={friends} setFriends={setFriends} templates={templates} setTemplates={setTemplates} friendRequests={friendRequests} myPendingInvites={myPendingInvites} onCancelPendingInvite={cancelPendingInvite} onAcceptFriendRequest={acceptFriendRequest} onDeclineFriendRequest={declineFriendRequest} onSendFriendRequest={sendFriendRequest} onCancelFriendRequest={cancelFriendRequest} focusInvitationId={focusInvitationId} setFocusInvitationId={setFocusInvitationId} collapseAllSignal={collapseAllSignal}/>
+        <KaptajnOverblik players={players} setPlayers={setPlayers} avail={avail} setAvail={setAvail} baseMonday={baseMonday} today={today} setTab={setTab} currentUser={currentUser} invitations={invitations} setInvitations={setInvitations} matches={matches} setMatches={setMatches} lockedPlayers={lockedPlayers} setLockedPlayers={setLockedPlayers} drafts={drafts} setDrafts={setDrafts} setOpenDraftId={setOpenDraftId} friends={friends} setFriends={setFriends} templates={templates} setTemplates={setTemplates} friendRequests={friendRequests} myPendingInvites={myPendingInvites} onCancelPendingInvite={cancelPendingInvite} onAcceptFriendRequest={acceptFriendRequest} onDeclineFriendRequest={declineFriendRequest} onSendFriendRequest={sendFriendRequest} onCancelFriendRequest={cancelFriendRequest} focusInvitationId={focusInvitationId} setFocusInvitationId={setFocusInvitationId} collapseAllSignal={collapseAllSignal}/>
         {tab==="forespoergsel"&&(
           <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-4">
             <div className="bg-slate-50 rounded-2xl shadow-2xl w-full max-w-2xl p-4 sm:p-6" style={{maxHeight:"90vh",overflowY:"auto"}}>
@@ -3962,7 +3978,7 @@ export default function App(){
             </div>
           </div>
         )}
-        {tab==="kalender"&&<SpillerKalender currentUser={currentUser} players={players} avail={avail} setAvail={setAvail} invitations={invitations} setInvitations={setInvitations} baseMonday={baseMonday} today={today} activePlayerId={activePlayerId} setActivePlayerId={setActivePlayerId} templates={templates} setTemplates={setTemplates} lockedPlayers={lockedPlayers} setLockedPlayers={setLockedPlayers}/>}
+        {tab==="kalender"&&<SpillerKalender currentUser={currentUser} players={players} avail={avail} setAvail={setAvail} invitations={invitations} setInvitations={setInvitations} baseMonday={baseMonday} today={today} templates={templates} setTemplates={setTemplates} lockedPlayers={lockedPlayers} setLockedPlayers={setLockedPlayers}/>}
 
         <p className="text-center text-[11px] text-slate-400 pt-2 pb-1">© {new Date().getFullYear()} Rikabilly Production</p>
       </div>
