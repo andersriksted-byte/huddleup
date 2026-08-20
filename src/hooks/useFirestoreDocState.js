@@ -17,14 +17,30 @@ export function useFirestoreDocState(path, defaultValue, { toFirestore, fromFire
   const latestRef = useRef(value);
   latestRef.current = value;
   const loadedRef = useRef(false);
+  // Handlinger (fx et klik på en kalendercelle) der når at ske, FØR vi har modtaget den ægte
+  // data fra serveren første gang — de bliver sat i kø her, i stedet for at blive skrevet oven i
+  // en tom/ufuldstændig lokal startværdi. Uden dette ville en handling, der skete i det korte
+  // vindue før første indlæsning, kunne overskrive rigtige, allerede-gemte data på serveren med
+  // en ufuldstændig kopi. Det er netop den fejl, der tidligere kunne slette en spillers kalender.
+  const pendingRef = useRef([]);
 
   useEffect(() => {
+    loadedRef.current = false;
+    pendingRef.current = [];
     const ref = doc(db, path);
     const unsub = onSnapshot(ref, (snap) => {
+      let next = !snap.exists() ? defaultValue : (fromFirestore ? fromFirestore(snap.data()) : snap.data());
+      if (!loadedRef.current && pendingRef.current.length) {
+        // Afspil de handlinger, der nåede at ske inden vi havde den ægte data, oven på DEN ægte
+        // data i stedet for oven på tomrummet vi startede med — og gem dét samlede resultat.
+        for (const updater of pendingRef.current) {
+          next = typeof updater === "function" ? updater(next) : updater;
+        }
+        pendingRef.current = [];
+        const payload = toFirestore ? toFirestore(next) : next;
+        setDoc(doc(db, path), payload).catch((e) => console.error("Gem fejlede:", e));
+      }
       loadedRef.current = true;
-      if (!snap.exists()) { setValue(defaultValue); latestRef.current = defaultValue; return; }
-      const raw = snap.data();
-      const next = fromFirestore ? fromFirestore(raw) : raw;
       latestRef.current = next;
       setValue(next);
     }, (err) => console.error(`Firestore-fejl (${path}):`, err));
@@ -36,7 +52,13 @@ export function useFirestoreDocState(path, defaultValue, { toFirestore, fromFire
     const prev = latestRef.current;
     const next = typeof updater === "function" ? updater(prev) : updater;
     latestRef.current = next;
-    setValue(next);
+    setValue(next); // opdater UI'et med det samme, uanset om vi har hørt fra serveren endnu
+    if (!loadedRef.current) {
+      // Endnu ikke bekræftet den ægte data fra serveren — vent med at skrive til den kommer,
+      // se onSnapshot ovenfor som afspiller og gemmer denne handling korrekt bagefter.
+      pendingRef.current.push(updater);
+      return;
+    }
     const payload = toFirestore ? toFirestore(next) : next;
     setDoc(doc(db, path), payload).catch((e) => console.error("Gem fejlede:", e));
   }, [path, toFirestore]);

@@ -672,7 +672,7 @@ const INTRO_STEPS=[
     icon:Send,
     kicker:"Trin 1",
     title:"Opret en forespørgsel",
-    body:"Gå til fanen \"Opret forespørgsel\". Giv den en titel og en periode, og vælg hvilke spillere der skal forespørges (kun venner kan søges frem — tilføj dem via Venner-menuen). Du bestemmer også hvor mange spillere der mindst skal kunne, og hvor mange sammenhængende timer.",
+    body:"Gå til fanen \"Opret Huddle\". Giv den en titel og en periode, og vælg hvilke spillere der skal forespørges (kun venner kan søges frem — tilføj dem via Venner-menuen). Du bestemmer også hvor mange spillere der mindst skal kunne, og hvor mange sammenhængende timer.",
   },
   {
     icon:UserPlus,
@@ -852,24 +852,6 @@ function FriendsModal({currentUser,players,friends,friendRequests,myPendingInvit
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 shrink-0 ml-1"><X size={18}/></button>
         </div>
         <div className="overflow-y-auto p-5 space-y-5">
-          {pendingSend&&(
-            <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 space-y-2">
-              <div className="text-sm text-blue-800">Vil du sende en venneanmodning til <span className="font-semibold">{pendingSend.name}</span>?</div>
-              <div className="flex gap-2">
-                <button onClick={confirmSendRequest} className="flex-1 bg-blue-700 hover:bg-blue-800 text-white text-sm font-semibold rounded-lg py-2">Send anmodning</button>
-                <button onClick={()=>setPendingSend(null)} className="flex-1 bg-white border border-blue-200 text-blue-800 text-sm font-semibold rounded-lg py-2">Annuller</button>
-              </div>
-            </div>
-          )}
-          {confirmRemoveId&&(
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-2">
-              <div className="text-sm text-amber-800">Er du sikker på at du vil fjerne <span className="font-semibold">{removeTarget?.name}</span> som ven?</div>
-              <div className="flex gap-2">
-                <button onClick={confirmRemoveFriend} className="flex-1 bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold rounded-lg py-2">Ja, fjern</button>
-                <button onClick={()=>setConfirmRemoveId(null)} className="flex-1 bg-white border border-amber-300 text-amber-800 text-sm font-semibold rounded-lg py-2">Nej</button>
-              </div>
-            </div>
-          )}
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1.5">Tilføj ven — søg på navn, telefon eller e-mail</label>
             <div className="relative">
@@ -989,6 +971,30 @@ function FriendsModal({currentUser,players,friends,friendRequests,myPendingInvit
           </div>
         </div>
       </div>
+      {/* Bekræftelsesbokse vises som deres eget lag, fast centreret i vinduet — uafhængigt af
+          hvor langt man er scrollet ned i selve venneliste-kortet ovenfor. */}
+      {pendingSend&&(
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4" onClick={()=>setPendingSend(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-4 space-y-3" onClick={e=>e.stopPropagation()}>
+            <div className="text-sm text-slate-700">Vil du sende en venneanmodning til <span className="font-semibold">{pendingSend.name}</span>?</div>
+            <div className="flex gap-2">
+              <button onClick={confirmSendRequest} className="flex-1 bg-blue-700 hover:bg-blue-800 text-white text-sm font-semibold rounded-lg py-2">Send anmodning</button>
+              <button onClick={()=>setPendingSend(null)} className="flex-1 bg-white border border-blue-200 text-blue-800 text-sm font-semibold rounded-lg py-2">Annuller</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {confirmRemoveId&&(
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4" onClick={()=>setConfirmRemoveId(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-4 space-y-3" onClick={e=>e.stopPropagation()}>
+            <div className="text-sm text-slate-700">Er du sikker på at du vil fjerne <span className="font-semibold">{removeTarget?.name}</span> som ven?</div>
+            <div className="flex gap-2">
+              <button onClick={confirmRemoveFriend} className="flex-1 bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold rounded-lg py-2">Ja, fjern</button>
+              <button onClick={()=>setConfirmRemoveId(null)} className="flex-1 bg-white border border-amber-300 text-amber-800 text-sm font-semibold rounded-lg py-2">Nej</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1127,7 +1133,7 @@ function KaptajnOverblik({players,setPlayers,avail,setAvail,baseMonday,today,set
             <p className="text-xs text-slate-400 max-w-sm mx-auto">Opret en forespørgsel om spilletider for at se tilgængelighed, bedste tider og fastlagte kampe her.</p>
             <button onClick={()=>setTab("forespoergsel")}
               className="inline-flex items-center gap-1.5 bg-blue-700 text-white text-sm font-semibold rounded-xl px-4 py-2 hover:bg-blue-800 mt-1">
-              <Send size={14}/> Opret forespørgsel
+              <Send size={14}/> Opret Huddle
             </button>
           </>)}
         </div>
@@ -3469,7 +3475,7 @@ export default function App(){
   // enkelte forespørgsel (søg/inviter).
   const TABS=[
     {id:"overblik",label:"Overblik",icon:<CalendarClock size={15}/>},
-    {id:"forespoergsel",label:"Opret forespørgsel",icon:<Send size={15}/>},
+    {id:"forespoergsel",label:"Opret Huddle",icon:<Send size={15}/>},
   ];
 
   return(
