@@ -66,6 +66,76 @@ export function useFirestoreDocState(path, defaultValue, { toFirestore, fromFire
   return [value, setValueAndSync];
 }
 
+// Ligesom useFirestoreDocState, men til data der reelt er opdelt PR. SPILLER (eller pr. anden
+// nøgle) inde i ét dokument — fx tilgængelighed og faste ugentlige tider, som begge er formen
+// "byPlayer: { spillerId: [...] }". I stedet for at skrive HELE dokumentet igen for hver ændring
+// (baseret på hvad netop denne browser-fane tilfældigvis har liggende lokalt lige nu), skriver
+// setKeyValue her KUN til den ene nøgle der reelt ændres — med Firestores egen merge — helt
+// uafhængigt af om andre spilleres data (eller ens egen, fra en anden fane/enhed) er nået at blive
+// hentet/opdateret lokalt endnu. Det gør det strukturelt umuligt for én handling at overskrive en
+// ANDEN spillers kalender, og indsnævrer risikoen for ens EGEN til kun "samme spiller redigerer
+// samtidig fra to steder" — i modsætning til før, hvor enhver skrivning kunne ramme alle spilleres
+// data på én gang. Det er netop den brede overskrivning, der gentagne gange har slettet spilleres
+// kalendere i denne app.
+export function useFirestorePartitionedMap(path, { toItem, fromItem } = {}) {
+  const [byKey, setByKey] = useState({});
+  const latestRef = useRef({});
+  const loadedRef = useRef(false);
+  // Samme princip som pendingRef i useFirestoreDocState ovenfor — se kommentaren dér.
+  const pendingRef = useRef([]);
+
+  useEffect(() => {
+    loadedRef.current = false;
+    pendingRef.current = [];
+    const ref = doc(db, path);
+    const unsub = onSnapshot(ref, (snap) => {
+      const raw = snap.exists() ? (snap.data()?.byPlayer || {}) : {};
+      let next = fromItem
+        ? Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, fromItem(v)]))
+        : { ...raw };
+      if (!loadedRef.current && pendingRef.current.length) {
+        for (const { key, updater } of pendingRef.current) {
+          const cur = next[key];
+          next = { ...next, [key]: typeof updater === "function" ? updater(cur) : updater };
+        }
+        for (const { key } of pendingRef.current) {
+          const payloadVal = toItem ? toItem(next[key]) : next[key];
+          setDoc(doc(db, path), { byPlayer: { [key]: payloadVal } }, { merge: true })
+            .catch((e) => console.error("Gem fejlede:", e));
+        }
+        pendingRef.current = [];
+      }
+      loadedRef.current = true;
+      latestRef.current = next;
+      setByKey(next);
+    }, (err) => console.error(`Firestore-fejl (${path}):`, err));
+    return unsub;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path]);
+
+  const setKeyValue = useCallback((key, updater) => {
+    const prev = latestRef.current;
+    const nextVal = typeof updater === "function" ? updater(prev[key]) : updater;
+    const next = { ...prev, [key]: nextVal };
+    latestRef.current = next;
+    setByKey(next);
+    if (!loadedRef.current) {
+      pendingRef.current.push({ key, updater });
+      return;
+    }
+    const payloadVal = toItem ? toItem(nextVal) : nextVal;
+    setDoc(doc(db, path), { byPlayer: { [key]: payloadVal } }, { merge: true })
+      .catch((e) => console.error("Gem fejlede:", e));
+  }, [path, toItem]);
+
+  return [byKey, setKeyValue];
+}
+
+// ── Hjælpere til (de)serialisering af ÉT element i en useFirestorePartitionedMap (fx én
+// spillers Set af markerede tidspunkter) ──
+export const setItemToFirestore = (set) => [...(set || [])];
+export const setItemFromFirestore = (arr) => new Set(arr || []);
+
 // ── Hjælpere til at (de)serialisere Set-baseret state (avail, templates, lockedPlayers) ──
 // { playerId: Set<string> }  <->  { byPlayer: { playerId: string[] } }
 export const setMapToFirestore = (obj) => ({

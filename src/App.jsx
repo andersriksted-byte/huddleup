@@ -11,7 +11,8 @@ import { db, newDocId } from "./lib/firebase.js";
 import { useAuth } from "./hooks/useAuth.js";
 import { useFirestoreCollection } from "./hooks/useFirestoreCollection.js";
 import {
-  useFirestoreDocState, setMapToFirestore, setMapFromFirestore,
+  useFirestoreDocState, useFirestorePartitionedMap,
+  setItemToFirestore, setItemFromFirestore,
   setToFirestore, setFromFirestore, plainMapToFirestore, plainMapFromFirestore,
   listToFirestore, listFromFirestore,
 } from "./hooks/useFirestoreDocState.js";
@@ -2882,7 +2883,7 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
   const template=(templates&&viewId&&templates[viewId])||new Set();
   const setTemplate=(fn)=>{
     if(!viewId)return;
-    setTemplates(prev=>{const cur=(prev&&prev[viewId])||new Set();const next=typeof fn==="function"?fn(cur):fn;return{...prev,[viewId]:next};});
+    setTemplates(viewId,cur=>{const c=cur||new Set();return typeof fn==="function"?fn(c):fn;});
   };
   const [showTemplate,setShowTemplate]=useState(true);
   const [applyMsg,setApplyMsg]=useState(null);
@@ -2934,8 +2935,8 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
       }
     });
     if(pattern.size===0){setApplyMsg("Ingen markeringer fundet i den arkiverede besvarelse.");return;}
-    setAvail(prev=>{
-      const cur=new Set(prev[player.id]||[]);
+    setAvail(player.id,cur0=>{
+      const cur=new Set(cur0||[]);
       const kept=new Set([...cur].filter(k=>{const sep=k.lastIndexOf("|");const iso=k.slice(0,sep);return iso<invitation.startIso||iso>invitation.endIso;}));
       let d=new Date(invitation.startIso);
       while(isoDate(d)<=invitation.endIso){
@@ -2948,7 +2949,7 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
         });
         d.setDate(d.getDate()+1);
       }
-      return{...prev,[player.id]:kept};
+      return kept;
     });
     setApplyMsg(`Kopieret fra "${archInv.title||"tidligere besvarelse"}" til kladde.`);
   };
@@ -2999,7 +3000,7 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
 
   const setMarked=(fn)=>{
     if(!canEdit)return;
-    setAvail(prev=>({...prev,[player.id]:fn(prev[player.id]||new Set())}));
+    setAvail(player.id,cur=>fn(cur||new Set()));
   };
 
   const isPast=(d)=>isoDate(d)<isoDate(today);
@@ -3574,8 +3575,15 @@ export default function App(){
   // som ét samlet dokument hver (se useFirestoreDocState) — det matcher den oprindelige
   // state-facon 1:1, så resten af appens kode (KaptajnOverblik, InvitationCard, SpillerKalender
   // osv.) er stort set uændret.
-  const [avail,setAvail]=useFirestoreDocState("state/availability",{},{toFirestore:setMapToFirestore,fromFirestore:setMapFromFirestore});
-  const [templates,setTemplates]=useFirestoreDocState("state/templates",{},{toFirestore:setMapToFirestore,fromFirestore:setMapFromFirestore});
+  //
+  // avail/templates er dog "byPlayer"-formen — hver spillers egne markeringer, uafhængigt af alle
+  // andres — og bruger derfor useFirestorePartitionedMap: setAvail(playerId, fn) skriver KUN til
+  // den ene spillers egen nøgle i Firestore (via merge), aldrig hele dokumentet på én gang. Det er
+  // den strukturelle rettelse af den gentagne "kalenderdata forsvinder"-fejl: uanset hvad denne
+  // browser-fane tilfældigvis har liggende lokalt om ANDRE spilleres data, kan en skrivning her
+  // aldrig røre ved dem.
+  const [avail,setAvail]=useFirestorePartitionedMap("state/availability",{toItem:setItemToFirestore,fromItem:setItemFromFirestore});
+  const [templates,setTemplates]=useFirestorePartitionedMap("state/templates",{toItem:setItemToFirestore,fromItem:setItemFromFirestore});
   // Venner: pr. bruger en liste af spiller-id'er man er blevet venner med (gensidigt) — kun venner
   // kan findes/tilføjes til en forespørgsel via søgning, så man ikke ser hele spillerlisten i systemet.
   const [friends,setFriends]=useFirestoreDocState("state/friends",{},{toFirestore:plainMapToFirestore,fromFirestore:plainMapFromFirestore});
@@ -3688,13 +3696,11 @@ export default function App(){
     await Promise.all((myPendingInvites||[])
       .map(iv=>deleteDoc(doc(db,"invites",iv.id)).catch(()=>{})));
 
-    const nextAvail={...avail};
-    delete nextAvail[uid];
-    await setDoc(doc(db,"state/availability"),setMapToFirestore(nextAvail));
-
-    const nextTemplates={...templates};
-    delete nextTemplates[uid];
-    await setDoc(doc(db,"state/templates"),setMapToFirestore(nextTemplates));
+    // Atomart — fjerner KUN denne ene spillers egen nøgle (se useFirestorePartitionedMap), i
+    // stedet for at skrive hele dokumentet igen ud fra en lokal kopi der kan overskrive andre
+    // spilleres kalendere, hvis de har ændret noget siden denne fane sidst hørte fra serveren.
+    await setDoc(doc(db,"state/availability"),{byPlayer:{[uid]:deleteField()}},{merge:true});
+    await setDoc(doc(db,"state/templates"),{byPlayer:{[uid]:deleteField()}},{merge:true});
 
     const nextLocked=new Set(lockedPlayers);
     nextLocked.delete(uid);
