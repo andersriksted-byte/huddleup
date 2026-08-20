@@ -26,6 +26,15 @@ const pad = (n) => String(n).padStart(2, "0");
 const isoDate = (d) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 const fmtShort = (d) => `${d.getDate()}. ${MONTHS[d.getMonth()]}`;
 const slotKey = (iso, blk) => `${iso}|${blk}`;
+// Nøgle til "state/availability" (se useFirestorePartitionedMap): kalendermarkeringer er unikke
+// PR. HUDDLE-FORESPØRGSEL OG SPILLER — at markere/afmarkere en tid på én forespørgsel må aldrig
+// kunne ses eller ændre noget på en anden forespørgsel, heller ikke selvom deres perioder
+// overlapper. Kun "faste ugentlige tider" (se "templates", som fortsat er pr. spiller alene) er
+// beregnet til at blive genbrugt på tværs af forespørgsler — og det sker udelukkende ved et
+// aktivt tryk på "Udfyld alle xx uger", som kopierer skabelonen ned i netop den valgte
+// forespørgsels egne markeringer. Uden en valgt forespørgsel (fx det fritstående "Kalender"-view
+// når man ikke har nogen aktiv forespørgsel) bruges "_none" som nøgle.
+const availKey = (invitationId, playerId) => `${invitationId || "_none"}:${playerId}`;
 
 function mondayOf(d) {
   const x = new Date(d); const j = x.getDay();
@@ -1495,14 +1504,22 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
   },[baseMonday,weekOffset]);
 
   const isPast=(d)=>isoDate(d)<isoDate(today);
-  const countAt=(iso,b)=>scopePlayers.filter(pl=>avail[pl.id]?.has(slotKey(iso,b))).length;
-  const whoCan=(iso,b)=>scopePlayers.filter(pl=>avail[pl.id]?.has(slotKey(iso,b)));
+  // Kalendermarkeringer scopet til NETOP denne forespørgsel — se kommentaren ved availKey().
+  // Uden dette ville "Samlet tilgængelighed"/"Bedste tider"/fastlagte kampe her kunne blande
+  // markeringer ind fra andre forespørgsler med overlappende perioder.
+  const invAvail=useMemo(()=>{
+    const m={};
+    scopePlayers.forEach(pl=>{m[pl.id]=avail[availKey(invitation.id,pl.id)]||new Set();});
+    return m;
+  },[avail,scopePlayers,invitation.id]);
+  const countAt=(iso,b)=>scopePlayers.filter(pl=>invAvail[pl.id]?.has(slotKey(iso,b))).length;
+  const whoCan=(iso,b)=>scopePlayers.filter(pl=>invAvail[pl.id]?.has(slotKey(iso,b)));
   // Kun dage inden for perioden vises i gitteret
   const visibleDates=weekDates.filter(d=>isoDate(d)>=invitation.startIso&&isoDate(d)<=invitation.endIso);
 
   const bestTimes=useMemo(()=>{
-    return bestConsecutiveSlots(avail,scopePlayers,baseMonday,today,threshold,consecHours,invitation.startIso,invitation.endIso);
-  },[avail,scopePlayers,threshold,consecHours,baseMonday,today,invitation]);
+    return bestConsecutiveSlots(invAvail,scopePlayers,baseMonday,today,threshold,consecHours,invitation.startIso,invitation.endIso);
+  },[invAvail,scopePlayers,threshold,consecHours,baseMonday,today,invitation]);
 
   // Filtreret til den uge der er valgt i "Samlet tilgængelighed" (hvis nogen)
   const filteredBestTimes=useMemo(()=>{
@@ -1523,7 +1540,7 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
       arr.push({w,start:new Date(s),qualifying,anyAvail});
     }
     return arr;
-  },[bestTimes,baseMonday,avail,scopePlayers]);
+  },[bestTimes,baseMonday,invAvail,scopePlayers]);
 
   // Eksport-funktioner — Bedste tider
   const exportCSV=()=>{
@@ -1815,7 +1832,7 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
     if(!ids){
       const hours=m.hours||1;
       ids=scopePlayers.filter(pl=>{
-        for(let h=0;h<hours;h++){if(!avail[pl.id]?.has(slotKey(m.iso,m.block+h)))return false;}
+        for(let h=0;h<hours;h++){if(!invAvail[pl.id]?.has(slotKey(m.iso,m.block+h)))return false;}
         return true;
       }).map(pl=>pl.id);
     }
@@ -2924,7 +2941,9 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
   // Kopiér en arkiveret besvarelses ugentlige mønster til kladden for den valgte aktive forespørgsel
   const copyArchivedToDraft=(archInv)=>{
     if(!invitation||!editingSelf||isSubmitted)return;
-    const src=avail[player.id]||new Set();
+    // Mønsteret hentes fra den ARKIVEREDE forespørgsels EGNE markeringer — ikke fra en delt
+    // kalender — se availKey().
+    const src=avail[availKey(archInv.id,player.id)]||new Set();
     const pattern=new Set();
     src.forEach(key=>{
       const sep=key.lastIndexOf("|");
@@ -2935,7 +2954,7 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
       }
     });
     if(pattern.size===0){setApplyMsg("Ingen markeringer fundet i den arkiverede besvarelse.");return;}
-    setAvail(player.id,cur0=>{
+    setAvail(availKey(invitation.id,player.id),cur0=>{
       const cur=new Set(cur0||[]);
       const kept=new Set([...cur].filter(k=>{const sep=k.lastIndexOf("|");const iso=k.slice(0,sep);return iso<invitation.startIso||iso>invitation.endIso;}));
       let d=new Date(invitation.startIso);
@@ -2993,14 +3012,17 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
     </div>
   );
 
-  const marked=avail[player.id]||new Set();
+  // Markeringerne hører til NETOP den valgte forespørgsel (eller "_none" uden nogen valgt) — se
+  // availKey(). Skift af forespørgsel (selInvId/lockedInvitationId) skifter derfor reelt til en
+  // helt anden, uafhængig kalender.
+  const marked=avail[availKey(invitation?.id,player.id)]||new Set();
   const isSubmitted=editingSelf&&!!(lockedPlayers?.has(player.id)||(invitation?.submittedIds?.includes(player.id)));
   const submitDeadlinePassed=editingSelf&&!!(invitation?.submitDeadline&&isoDate(today)>invitation.submitDeadline);
   const canEdit=(!editingSelf||(!isSubmitted&&!submitDeadlinePassed));
 
   const setMarked=(fn)=>{
     if(!canEdit)return;
-    setAvail(player.id,cur=>fn(cur||new Set()));
+    setAvail(availKey(invitation?.id,player.id),cur=>fn(cur||new Set()));
   };
 
   const isPast=(d)=>isoDate(d)<isoDate(today);
@@ -3425,7 +3447,15 @@ function ProfilModal({currentUser,players,setPlayers,avail,baseMonday,onClose}){
     }finally{ setPwBusy(false); }
   };
 
-  const marked=avail[currentUser.id]||new Set();
+  // Kalendermarkeringer er nu pr. forespørgsel (se availKey()) — dette er kun en grov oversigt
+  // over hvor mange uger brugeren har markeret NOGET i, uanset hvilken forespørgsel, så vi
+  // forener markeringerne på tværs af alle brugerens forespørgsels-nøgler her.
+  const marked=useMemo(()=>{
+    const u=new Set();
+    const suffix=`:${currentUser.id}`;
+    Object.entries(avail||{}).forEach(([k,set])=>{ if(k.endsWith(suffix))(set||new Set()).forEach(v=>u.add(v)); });
+    return u;
+  },[avail,currentUser.id]);
   const weeksWithSlots=useMemo(()=>{
     let c=0;
     for(let w=0;w<HORIZON_WEEKS;w++){
@@ -3696,10 +3726,16 @@ export default function App(){
     await Promise.all((myPendingInvites||[])
       .map(iv=>deleteDoc(doc(db,"invites",iv.id)).catch(()=>{})));
 
-    // Atomart — fjerner KUN denne ene spillers egen nøgle (se useFirestorePartitionedMap), i
-    // stedet for at skrive hele dokumentet igen ud fra en lokal kopi der kan overskrive andre
-    // spilleres kalendere, hvis de har ændret noget siden denne fane sidst hørte fra serveren.
-    await setDoc(doc(db,"state/availability"),{byPlayer:{[uid]:deleteField()}},{merge:true});
+    // Atomart — fjerner KUN denne spillers egne nøgler (se useFirestorePartitionedMap), i stedet
+    // for at skrive hele dokumentet igen ud fra en lokal kopi der kan overskrive andre spilleres
+    // kalendere, hvis de har ændret noget siden denne fane sidst hørte fra serveren.
+    // "availability" er nu nøglet PR. FORESPØRGSEL+SPILLER (se availKey()), så denne spiller kan
+    // have flere nøgler at rydde op i — én pr. forespørgsel de har markeret noget i — i stedet for
+    // kun de(n) ene, gamle nøgle "[uid]".
+    const availKeysToDelete=Object.keys(avail||{}).filter(k=>k.endsWith(`:${uid}`));
+    if(availKeysToDelete.length){
+      await setDoc(doc(db,"state/availability"),{byPlayer:Object.fromEntries(availKeysToDelete.map(k=>[k,deleteField()]))},{merge:true});
+    }
     await setDoc(doc(db,"state/templates"),{byPlayer:{[uid]:deleteField()}},{merge:true});
 
     const nextLocked=new Set(lockedPlayers);
