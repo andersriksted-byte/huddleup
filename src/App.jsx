@@ -643,7 +643,7 @@ function LoginScreen({onLogin,onSignup,onResetPassword}){
 /* ═══════════════════════════════════════════════════════════
    PROFIL-DROPDOWN (header)
 ═══════════════════════════════════════════════════════════ */
-function ProfileDropdown({user,player,onLogout,onOpenProfil,onOpenFriends,onOpenIntro}){
+function ProfileDropdown({user,player,onLogout,onOpenProfil,onOpenFriends,onOpenIntro,onDeleteProfile}){
   const [open,setOpen]=useState(false);
   return(
     <div className="relative">
@@ -679,9 +679,55 @@ function ProfileDropdown({user,player,onLogout,onOpenProfil,onOpenFriends,onOpen
               className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-red-600 hover:bg-red-50 border-t border-slate-100">
               <LogOut size={14}/> Log ud
             </button>
+            <button onClick={()=>{setOpen(false);onDeleteProfile();}}
+              className="w-full text-left px-3 py-2 text-xs text-slate-400 hover:text-red-500 hover:bg-red-50 border-t border-slate-100">
+              Slet profil
+            </button>
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SLET PROFIL — bekræftelse (vises som eget lag, fast centreret)
+═══════════════════════════════════════════════════════════ */
+function DeleteProfileModal({onConfirm,onClose}){
+  const [password,setPassword]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [err,setErr]=useState("");
+  const confirm=async()=>{
+    if(!password||busy)return;
+    setErr("");setBusy(true);
+    try{
+      await onConfirm(password);
+    }catch(e){
+      const wrongPw=e?.code==="auth/wrong-password"||e?.code==="auth/invalid-credential";
+      setErr(wrongPw?"Forkert adgangskode.":(e?.message||"Kunne ikke slette profilen. Prøv igen."));
+      setBusy(false);
+    }
+  };
+  return(
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5 space-y-3">
+        <div className="text-sm font-semibold text-slate-800">Slet din HuddleUp-profil</div>
+        <p className="text-sm text-slate-600">Du er ved at slette din HuddleUp profil. Hvis du fortsætter vil al din HuddleUp data også blive slettet. Ønsker du at fortsætte?</p>
+        <div>
+          <label className="text-xs font-medium text-slate-600 block mb-1.5">Bekræft med din adgangskode</label>
+          <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Adgangskode" disabled={busy}
+            className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-400 disabled:opacity-60"/>
+        </div>
+        {err&&<p className="text-xs text-red-500 font-medium">{err}</p>}
+        <div className="flex gap-2 pt-1">
+          <button onClick={onClose} disabled={busy}
+            className="flex-1 bg-white border border-slate-200 text-slate-600 text-sm font-semibold rounded-lg py-2 disabled:opacity-40 hover:bg-slate-50">Fortryd</button>
+          <button onClick={confirm} disabled={busy||!password}
+            className="flex-1 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-lg py-2 disabled:opacity-40">
+            {busy?"Sletter…":"Slet profil"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1065,8 +1111,12 @@ function KaptajnOverblik({players,setPlayers,avail,setAvail,baseMonday,today,set
 
   return(
     <div className="space-y-4">
-      {/* Visningsvælger — knap i højre side der viser det aktuelle valg og åbner et rullegardin */}
-      <div className="flex justify-end">
+      {/* Opret-knap og visningsvælger — begge dele af den faste overblikslinje, ikke faner */}
+      <div className="flex items-center justify-between gap-2">
+        <button onClick={()=>setTab("forespoergsel")}
+          className="inline-flex items-center gap-1.5 bg-blue-700 text-white text-sm font-semibold rounded-xl px-3.5 py-2 hover:bg-blue-800 transition-colors shrink-0">
+          <Send size={14}/> <span className="hidden sm:inline">Opret ny Huddle</span><span className="sm:hidden">Opret</span>
+        </button>
         <div className="relative">
           <button onClick={()=>setViewMenuOpen(v=>!v)}
             className="inline-flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors">
@@ -1913,7 +1963,7 @@ function InvitationCard({invitation,players,setPlayers,avail,setAvail,baseMonday
               <div className="text-sm font-semibold text-slate-800">{invitation.title||"Anmodning om spilletider"}</div>
               {!isClosed&&pendingAccept&&<span className="text-[10px] bg-blue-100 text-blue-700 rounded-full px-2 py-0.5 font-semibold shrink-0">Afventer din accept</span>}
               {!isClosed&&declined&&<span className="text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5 font-semibold shrink-0">Afslået</span>}
-              {!isClosed&&needsMyResponse&&<span className="text-[10px] bg-amber-100 text-amber-700 rounded-full px-2 py-0.5 font-semibold shrink-0">Kræver din besvarelse</span>}
+              {!isClosed&&needsMyResponse&&<span className="inline-flex items-center gap-1 text-xs bg-amber-500 text-white rounded-full px-2.5 py-1 font-bold shrink-0"><Bell size={11}/> Besvar</span>}
               {myMatches.length>0&&<span className="inline-flex items-center gap-1 text-[10px] bg-lime-50 text-lime-700 rounded-full px-2 py-0.5 shrink-0"><CheckCircle2 size={9}/> {myMatches.length} kamp{myMatches.length===1?"":"e"} fastlagt</span>}
             </div>
             <ReqMeta item={invitation}/>
@@ -2461,6 +2511,13 @@ function OpretForespoergsel({players,setPlayers,setAvail,currentUser,invitations
 
   return(
     <div className="space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-bold text-slate-800">Opret Ny Huddle</h2>
+          <p className="text-xs text-slate-500 mt-0.5">Her kan du sende en Huddle-forespørgsel til dit hold — vælg hvilke spillere der skal forespørges om deres tilgængelighed i en given periode.</p>
+        </div>
+        <button type="button" onClick={()=>setTab("overblik")} className="text-slate-400 hover:text-slate-600 shrink-0"><X size={20}/></button>
+      </div>
       <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-4">
         <div>
           <label className="text-xs font-medium text-slate-600 block mb-1.5">Billede til rubrik</label>
@@ -3343,7 +3400,7 @@ export default function App(){
   // generatePassword). "currentUser" er en sammenfletning af Firebase Auth-identiteten og det
   // tilhørende Firestore-profildokument (navn, telefon, avatar) — resten af appen bruger den
   // præcis som før, blot uden adgangskoder i almindelig tekst noget sted.
-  const {firebaseUser,currentUser,loading:authLoading,signIn,signUp,signOut,resetPassword}=useAuth();
+  const {firebaseUser,currentUser,loading:authLoading,signIn,signUp,signOut,resetPassword,deleteAccount}=useAuth();
 
   const [showProfil,setShowProfil]=useState(false);
   const [tab,setTab]=useState("overblik");
@@ -3384,6 +3441,7 @@ export default function App(){
 
   const [showFriends,setShowFriends]=useState(false);
   const [showIntro,setShowIntro]=useState(false); // "Introduktion til funktionerne" — trin-for-trin guide fra profilmenuen
+  const [showDeleteProfile,setShowDeleteProfile]=useState(false);
 
   const sendFriendRequest=(toId)=>{
     if(!toId||toId===currentUser?.id)return;
@@ -3418,6 +3476,64 @@ export default function App(){
 
   const handleLogin=(email,password)=>signIn(email,password);
   const handleLogout=()=>{ setTab("overblik"); return signOut(); };
+
+  // Sletning af egen profil ("Slet profil" i profil-dropdown). Rydder først alt det data, der
+  // reelt tilhører netop denne bruger, direkte og afventet (IKKE via de almindelige setFriends
+  // m.fl. — de skriver "fire and forget" i baggrunden, og her skal vi vide med sikkerhed at hver
+  // oprydning er landet på serveren, FØR selve login-kontoen slettes og man logges ud). Delt data
+  // (fx andre spilleres besvarelser, eller allerede fastlagte kampe) røres ikke — kun det, der er
+  // knyttet til netop denne bruger.
+  const handleDeleteProfile=async(password)=>{
+    const uid=currentUser.id;
+
+    const nextFriends={...friends};
+    delete nextFriends[uid];
+    for(const otherId of Object.keys(nextFriends)){
+      nextFriends[otherId]=(nextFriends[otherId]||[]).filter(x=>x!==uid);
+    }
+    await setDoc(doc(db,"state/friends"),plainMapToFirestore(nextFriends));
+
+    await Promise.all((friendRequests||[])
+      .filter(r=>r.fromId===uid||r.toId===uid)
+      .map(r=>deleteDoc(doc(db,"friendRequests",r.id)).catch(()=>{})));
+
+    await Promise.all((myPendingInvites||[])
+      .map(iv=>deleteDoc(doc(db,"invites",iv.id)).catch(()=>{})));
+
+    const nextAvail={...avail};
+    delete nextAvail[uid];
+    await setDoc(doc(db,"state/availability"),setMapToFirestore(nextAvail));
+
+    const nextTemplates={...templates};
+    delete nextTemplates[uid];
+    await setDoc(doc(db,"state/templates"),setMapToFirestore(nextTemplates));
+
+    const nextLocked=new Set(lockedPlayers);
+    nextLocked.delete(uid);
+    await setDoc(doc(db,"state/lockedPlayers"),setToFirestore(nextLocked));
+
+    await Promise.all((invitations||[])
+      .filter(inv=>inv.playerIds.includes(uid))
+      .map(inv=>{
+        const{[uid]:_r,...responses}=inv.responses||{};
+        const{[uid]:_c,...comments}=inv.comments||{};
+        const payload={
+          ...inv,
+          playerIds:inv.playerIds.filter(id=>id!==uid),
+          responses,
+          submittedIds:(inv.submittedIds||[]).filter(id=>id!==uid),
+          comments,
+        };
+        const{id,...data}=payload;
+        return setDoc(doc(db,"invitations",id),data).catch(()=>{});
+      }));
+
+    await deleteDoc(doc(db,"profiles",uid));
+
+    // Til sidst selve login-kontoen — kræver adgangskoden igen (Firebase-krav for så følsom en
+    // handling), og logger automatisk ud bagefter da kontoen ikke længere findes.
+    await deleteAccount(password);
+  };
 
   // Selvbetjent oprettelse af profil fra login-siden. Bagefter tjekkes om der findes én eller
   // flere "ventende invitationer" (oprettet via "Inviter en ny spiller" andre steder i appen) til
@@ -3504,11 +3620,6 @@ export default function App(){
   // Alle brugere har adgang til de samme faner. Fanen "Spillere" (den rå konto-/adgangsliste) er
   // fjernet — spillere styres nu udelukkende via Venner (profil-dropdown) og direkte fra den
   // enkelte forespørgsel (søg/inviter).
-  const TABS=[
-    {id:"overblik",label:"Overblik",icon:<CalendarClock size={15}/>},
-    {id:"forespoergsel",label:"Opret Huddle",icon:<Send size={15}/>},
-  ];
-
   return(
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6" style={{fontFamily:"system-ui,-apple-system,sans-serif"}}>
       {showProfil&&(
@@ -3519,6 +3630,7 @@ export default function App(){
           onSendRequest={sendFriendRequest} onCancelRequest={cancelFriendRequest} onRemoveFriend={removeFriend} onCancelPendingInvite={cancelPendingInvite} onClose={()=>setShowFriends(false)}/>
       )}
       {showIntro&&<IntroModal onClose={()=>setShowIntro(false)}/>}
+      {showDeleteProfile&&<DeleteProfileModal onConfirm={handleDeleteProfile} onClose={()=>setShowDeleteProfile(false)}/>}
       <div className="max-w-3xl mx-auto space-y-4">
         {/* Header */}
         <div className="flex items-center justify-between gap-3">
@@ -3561,24 +3673,20 @@ export default function App(){
                 </>
               )}
             </div>
-            <ProfileDropdown user={currentUser} player={players.find(p=>p.id===currentUser.id)} onLogout={handleLogout} onOpenProfil={()=>setShowProfil(true)} onOpenFriends={()=>setShowFriends(true)} onOpenIntro={()=>setShowIntro(true)}/>
+            <ProfileDropdown user={currentUser} player={players.find(p=>p.id===currentUser.id)} onLogout={handleLogout} onOpenProfil={()=>setShowProfil(true)} onOpenFriends={()=>setShowFriends(true)} onOpenIntro={()=>setShowIntro(true)} onDeleteProfile={()=>setShowDeleteProfile(true)}/>
           </div>
         </div>
 
-        {/* Faner */}
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-          <div className="flex divide-x divide-slate-200">
-            {TABS.map(t=>(
-              <button key={t.id} onClick={()=>setTab(t.id)}
-                className={`flex-1 px-2 py-3 text-xs sm:text-sm font-medium flex items-center justify-center gap-1.5 transition-colors ${tab===t.id?"bg-blue-700 text-white":"text-slate-600 hover:bg-slate-50"}`}>
-                {t.icon}<span className="hidden sm:inline">{t.label}</span><span className="sm:hidden">{t.label.split(" ")[0]}</span>
-              </button>
-            ))}
+        {/* Overblikket er nu det faste billede — der navigeres ikke længere til det via en fane.
+            "Opret Huddle" åbnes i stedet som et vindue ovenpå, se nedenfor. */}
+        <KaptajnOverblik players={players} setPlayers={setPlayers} avail={avail} setAvail={setAvail} baseMonday={baseMonday} today={today} setTab={setTab} setActivePlayerId={setActivePlayerId} currentUser={currentUser} invitations={invitations} setInvitations={setInvitations} matches={matches} setMatches={setMatches} lockedPlayers={lockedPlayers} setLockedPlayers={setLockedPlayers} drafts={drafts} setDrafts={setDrafts} setOpenDraftId={setOpenDraftId} friends={friends} setFriends={setFriends} templates={templates} setTemplates={setTemplates} friendRequests={friendRequests} myPendingInvites={myPendingInvites} onCancelPendingInvite={cancelPendingInvite} onAcceptFriendRequest={acceptFriendRequest} onDeclineFriendRequest={declineFriendRequest} focusInvitationId={focusInvitationId} setFocusInvitationId={setFocusInvitationId}/>
+        {tab==="forespoergsel"&&(
+          <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-4">
+            <div className="bg-slate-50 rounded-2xl shadow-2xl w-full max-w-2xl p-4 sm:p-6" style={{maxHeight:"90vh",overflowY:"auto"}}>
+              <OpretForespoergsel players={players} setPlayers={setPlayers} setAvail={setAvail} currentUser={currentUser} invitations={invitations} setInvitations={setInvitations} today={today} setTab={setTab} drafts={drafts} setDrafts={setDrafts} openDraftId={openDraftId} setOpenDraftId={setOpenDraftId} friends={friends} setFriends={setFriends} myPendingInvites={myPendingInvites} onCancelPendingInvite={cancelPendingInvite}/>
+            </div>
           </div>
-        </div>
-
-        {tab==="overblik"&&<KaptajnOverblik players={players} setPlayers={setPlayers} avail={avail} setAvail={setAvail} baseMonday={baseMonday} today={today} setTab={setTab} setActivePlayerId={setActivePlayerId} currentUser={currentUser} invitations={invitations} setInvitations={setInvitations} matches={matches} setMatches={setMatches} lockedPlayers={lockedPlayers} setLockedPlayers={setLockedPlayers} drafts={drafts} setDrafts={setDrafts} setOpenDraftId={setOpenDraftId} friends={friends} setFriends={setFriends} templates={templates} setTemplates={setTemplates} friendRequests={friendRequests} myPendingInvites={myPendingInvites} onCancelPendingInvite={cancelPendingInvite} onAcceptFriendRequest={acceptFriendRequest} onDeclineFriendRequest={declineFriendRequest} focusInvitationId={focusInvitationId} setFocusInvitationId={setFocusInvitationId}/>}
-        {tab==="forespoergsel"&&<OpretForespoergsel players={players} setPlayers={setPlayers} setAvail={setAvail} currentUser={currentUser} invitations={invitations} setInvitations={setInvitations} today={today} setTab={setTab} drafts={drafts} setDrafts={setDrafts} openDraftId={openDraftId} setOpenDraftId={setOpenDraftId} friends={friends} setFriends={setFriends} myPendingInvites={myPendingInvites} onCancelPendingInvite={cancelPendingInvite}/>}
+        )}
         {tab==="kalender"&&<SpillerKalender currentUser={currentUser} players={players} avail={avail} setAvail={setAvail} invitations={invitations} setInvitations={setInvitations} baseMonday={baseMonday} today={today} activePlayerId={activePlayerId} setActivePlayerId={setActivePlayerId} templates={templates} setTemplates={setTemplates} lockedPlayers={lockedPlayers} setLockedPlayers={setLockedPlayers}/>}
 
         <p className="text-center text-[11px] text-slate-400 pt-2 pb-1">© {new Date().getFullYear()} Rikabilly Production</p>

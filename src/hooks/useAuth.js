@@ -8,6 +8,7 @@ import {
   updatePassword,
   reauthenticateWithCredential,
   EmailAuthProvider,
+  deleteUser,
 } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { auth, db } from "../lib/firebase.js";
@@ -72,6 +73,19 @@ export function useAuth() {
     setProfile((prev) => ({ ...(prev || { id: user.uid }), ...partial }));
   }, []);
 
+  // Sletning af selve login-kontoen. Firebase kræver "reauthentication" med adgangskoden for
+  // så følsom en handling (samme krav som ved skift af adgangskode ovenfor) — uden det ville
+  // kontoen typisk fejle med "requires-recent-login". Selve Firestore-oprydningen (venner,
+  // forespørgsler, tilgængelighed mv.) sker separat i App.jsx FØR dette kaldes, mens man stadig
+  // er logget ind og har skriverettigheder.
+  const deleteAccount = useCallback(async (password) => {
+    const user = auth.currentUser;
+    if (!user) throw new Error("Ikke logget ind.");
+    const cred = EmailAuthProvider.credential(user.email, password);
+    await reauthenticateWithCredential(user, cred);
+    await deleteUser(user);
+  }, []);
+
   return {
     firebaseUser: fbUser,
     currentUser: profile,
@@ -82,5 +96,6 @@ export function useAuth() {
     resetPassword,
     changePassword,
     saveProfile,
+    deleteAccount,
   };
 }
