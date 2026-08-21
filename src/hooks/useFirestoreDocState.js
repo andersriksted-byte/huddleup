@@ -48,6 +48,8 @@ export function useFirestoreDocState(path, defaultValue, { toFirestore, fromFire
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path]);
 
+  // Returnerer et Promise<boolean> — se tilsvarende kommentar ved setKeyValue i
+  // useFirestorePartitionedMap herunder for hvorfor.
   const setValueAndSync = useCallback((updater) => {
     const prev = latestRef.current;
     const next = typeof updater === "function" ? updater(prev) : updater;
@@ -56,11 +58,19 @@ export function useFirestoreDocState(path, defaultValue, { toFirestore, fromFire
     if (!loadedRef.current) {
       // Endnu ikke bekræftet den ægte data fra serveren — vent med at skrive til den kommer,
       // se onSnapshot ovenfor som afspiller og gemmer denne handling korrekt bagefter.
-      pendingRef.current.push(updater);
-      return;
+      return new Promise((resolve) => {
+        pendingRef.current.push(updater);
+        // Denne sjældne sti (skrivning før første indlæsning) bliver ikke i praksis brugt af
+        // submitCalendar (som altid venter til invitationen er indlæst), så vi løser den blot
+        // optimistisk her frem for at bygge en fuld ekstra kø-bekræftelse for et tilfælde der reelt
+        // ikke opstår i den kritiske sti.
+        resolve(true);
+      });
     }
     const payload = toFirestore ? toFirestore(next) : next;
-    setDoc(doc(db, path), payload).catch((e) => { console.error("Gem fejlede:", e); onError?.(e); });
+    return setDoc(doc(db, path), payload)
+      .then(() => true)
+      .catch((e) => { console.error("Gem fejlede:", e); onError?.(e); return false; });
   }, [path, toFirestore, onError]);
 
   return [value, setValueAndSync];
@@ -98,10 +108,11 @@ export function useFirestorePartitionedMap(path, { toItem, fromItem, onError } =
           const cur = next[key];
           next = { ...next, [key]: typeof updater === "function" ? updater(cur) : updater };
         }
-        for (const { key } of pendingRef.current) {
+        for (const { key, resolve } of pendingRef.current) {
           const payloadVal = toItem ? toItem(next[key]) : next[key];
           setDoc(doc(db, path), { byPlayer: { [key]: payloadVal } }, { merge: true })
-            .catch((e) => { console.error("Gem fejlede:", e); onError?.(e); });
+            .then(() => resolve(true))
+            .catch((e) => { console.error("Gem fejlede:", e); onError?.(e); resolve(false); });
         }
         pendingRef.current = [];
       }
@@ -113,6 +124,12 @@ export function useFirestorePartitionedMap(path, { toItem, fromItem, onError } =
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path]);
 
+  // Returnerer et Promise<boolean> — true når skrivningen er BEKRÆFTET af Firestore-serveren (ikke
+  // bare lagt lokalt i kø), false hvis den fejlede. De fleste kaldssteder ignorerer bevidst dette
+  // (kalder bare setKeyValue(...) uden await, for at UI'et føles øjeblikkeligt ved almindelige
+  // klik) — men se submitCalendar() i App.jsx, hvor netop DENNE bekræftelse bruges til at sikre, at
+  // "Indsend" aldrig kan markere en spiller som færdig, før dennes kalenderdata rent faktisk er
+  // gemt på serveren, uanset om tidligere enkelt-klik undervejs skulle være gået galt.
   const setKeyValue = useCallback((key, updater) => {
     const prev = latestRef.current;
     const nextVal = typeof updater === "function" ? updater(prev[key]) : updater;
@@ -120,12 +137,14 @@ export function useFirestorePartitionedMap(path, { toItem, fromItem, onError } =
     latestRef.current = next;
     setByKey(next);
     if (!loadedRef.current) {
-      pendingRef.current.push({ key, updater });
-      return;
+      return new Promise((resolve) => {
+        pendingRef.current.push({ key, updater, resolve });
+      });
     }
     const payloadVal = toItem ? toItem(nextVal) : nextVal;
-    setDoc(doc(db, path), { byPlayer: { [key]: payloadVal } }, { merge: true })
-      .catch((e) => { console.error("Gem fejlede:", e); onError?.(e); });
+    return setDoc(doc(db, path), { byPlayer: { [key]: payloadVal } }, { merge: true })
+      .then(() => true)
+      .catch((e) => { console.error("Gem fejlede:", e); onError?.(e); return false; });
   }, [path, toItem, onError]);
 
   return [byKey, setKeyValue];

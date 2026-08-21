@@ -32,6 +32,10 @@ export function useFirestoreCollection(collectionName, queryConstraints = [], en
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collectionName, enabled, JSON.stringify(queryConstraints.map((c) => c?._key ?? String(c)))]);
 
+  // Returnerer et Promise<boolean> — true kun hvis ALLE deraf følgende skrivninger/sletninger blev
+  // bekræftet af serveren (se samme mønster og begrundelse i useFirestoreDocState.js). De fleste
+  // kaldssteder ignorerer bevidst dette, men submitCalendar() i App.jsx bruger det til at sikre at
+  // "Indsend" ikke kan lykkes, hvis selve skrivningen til invitations-dokumentet reelt fejlede.
   const setItemsAndSync = useCallback((updater) => {
     const prev = latestRef.current;
     const next = typeof updater === "function" ? updater(prev) : updater;
@@ -40,11 +44,12 @@ export function useFirestoreCollection(collectionName, queryConstraints = [], en
 
     const prevIds = new Set(prev.map((x) => x.id));
     const nextIds = new Set(next.map((x) => x.id));
+    const writes = [];
 
     // Slettede dokumenter
     for (const p of prev) {
       if (!nextIds.has(p.id)) {
-        deleteDoc(doc(db, collectionName, p.id)).catch((e) => console.error("Sletning fejlede:", e));
+        writes.push(deleteDoc(doc(db, collectionName, p.id)).then(() => true).catch((e) => { console.error("Sletning fejlede:", e); return false; }));
       }
     }
     // Nye/ændrede dokumenter (Set-objekter kan ikke gemmes direkte i Firestore, så de
@@ -53,9 +58,10 @@ export function useFirestoreCollection(collectionName, queryConstraints = [], en
       const before = prev.find((p) => p.id === n.id);
       if (!before || JSON.stringify(before) !== JSON.stringify(n)) {
         const { id, ...data } = n;
-        setDoc(doc(db, collectionName, id), data).catch((e) => console.error("Gem fejlede:", e));
+        writes.push(setDoc(doc(db, collectionName, id), data).then(() => true).catch((e) => { console.error("Gem fejlede:", e); return false; }));
       }
     }
+    return Promise.all(writes).then((results) => results.every(Boolean));
   }, [collectionName]);
 
   return [items, setItemsAndSync];

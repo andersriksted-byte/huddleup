@@ -2935,6 +2935,8 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
   const [showTemplate,setShowTemplate]=useState(true);
   const [applyMsg,setApplyMsg]=useState(null);
   const [submitComment,setSubmitComment]=useState("");
+  // "idle" | "saving" | "error" — styrer Indsend-knappen, se submitCalendar herunder.
+  const [submitState,setSubmitState]=useState("idle");
 
   const player=players.find(p=>p.id===viewId)||players[0]||null;
   const editingSelf=!!player&&player.id===currentUser.id;
@@ -3080,13 +3082,28 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
     return true;
   };
 
-  const submitCalendar=()=>{
-    if(isSubmitted||!editingSelf)return;
+  // VIGTIGT (indført efter gentagne tilfælde af "jeg har indsendt, men mine tider mangler"): "Indsend"
+  // må ALDRIG bare stole på, at de løbende skrivninger fra de enkelte celleklik undervejs rent faktisk
+  // nåede frem til serveren — det er netop den antagelse, der har vist sig forkert flere gange. I
+  // stedet skriver vi her, eksplicit og ÉN GANG TIL, den fulde aktuelle markering til serveren og
+  // VENTER på et bekræftet svar (setAvail/updateInvitation returnerer nu et Promise<boolean> — se
+  // useFirestoreDocState.js), før spilleren overhovedet kan blive markeret som færdig. Går skrivningen
+  // galt (fx tabt forbindelse), får spilleren besked med det samme og "Indsend" gennemføres ikke —
+  // fremfor at appen tavst lader spilleren tro, den er færdig, mens data reelt aldrig blev gemt.
+  const submitCalendar=async()=>{
+    if(isSubmitted||!editingSelf||submitState==="saving")return;
+    setSubmitState("saving");
+    if(invActive){
+      const availOk=await setAvail(availKey(invitation?.id,player.id),()=>marked);
+      if(!availOk){setSubmitState("error");return;}
+    }
     if(invitation&&hasInvitation){
-      updateInvitation(invitation.id,prev=>({...prev,submittedIds:[...(prev.submittedIds||[]),player.id],comments:{...(prev.comments||{}),[player.id]:submitComment.trim()},submittedAt:{...(prev.submittedAt||{}),[player.id]:new Date().toISOString()}}));
+      const ok=await updateInvitation(invitation.id,prev=>({...prev,submittedIds:[...(prev.submittedIds||[]),player.id],comments:{...(prev.comments||{}),[player.id]:submitComment.trim()},submittedAt:{...(prev.submittedAt||{}),[player.id]:new Date().toISOString()}}));
+      if(!ok){setSubmitState("error");return;}
     } else {
       setLockedPlayers(prev=>{const n=new Set(prev);n.add(player.id);return n;});
     }
+    setSubmitState("idle");
   };
 
   const applyTemplate=()=>{
@@ -3409,10 +3426,17 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
             ?<div className="w-full inline-flex items-center justify-center gap-2 bg-red-50 border border-red-200 text-red-700 font-semibold text-sm rounded-xl py-3">
               <Lock size={16} className="text-red-500"/> Fristen er overskredet — indrapportering lukket
             </div>
-            :<button onClick={submitCalendar}
-              className="w-full inline-flex items-center justify-center gap-2 bg-blue-700 text-white font-semibold text-sm rounded-xl py-3 hover:bg-blue-800 transition-colors shadow-sm">
-              <Send size={16}/> Indsend datoer
-            </button>
+            :<div className="space-y-1.5">
+              <button onClick={submitCalendar} disabled={submitState==="saving"}
+                className="w-full inline-flex items-center justify-center gap-2 bg-blue-700 text-white font-semibold text-sm rounded-xl py-3 hover:bg-blue-800 disabled:opacity-60 disabled:cursor-not-allowed transition-colors shadow-sm">
+                {submitState==="saving"?<>Gemmer…</>:<><Send size={16}/> Indsend datoer</>}
+              </button>
+              {submitState==="error"&&(
+                <div className="flex items-center gap-1.5 text-xs text-red-600 font-medium">
+                  <AlertTriangle size={13}/> Kunne ikke gemme dine tider — tjek din forbindelse og prøv "Indsend" igen.
+                </div>
+              )}
+            </div>
       )}
     </div>
   );
