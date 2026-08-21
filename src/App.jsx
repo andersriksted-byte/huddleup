@@ -6,7 +6,7 @@ import {
   Lock, Eye, EyeOff, LogOut, LogIn, Key, Copy, Shield, Edit2, Check, User, Download, FileSpreadsheet, FileText, MoreVertical,
   Mail, ArrowLeft, RotateCcw, AlertTriangle
 } from "lucide-react";
-import { where, doc, setDoc, updateDoc, deleteDoc, getDocs, collection, query as fsQuery, arrayUnion, arrayRemove, deleteField, disableNetwork, enableNetwork } from "firebase/firestore";
+import { where, doc, setDoc, updateDoc, deleteDoc, getDocs, getDocFromServer, collection, query as fsQuery, arrayUnion, arrayRemove, deleteField, disableNetwork, enableNetwork } from "firebase/firestore";
 import { db, newDocId } from "./lib/firebase.js";
 import { useAuth } from "./hooks/useAuth.js";
 import { useFirestoreCollection } from "./hooks/useFirestoreCollection.js";
@@ -3110,6 +3110,32 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
   // useFirestoreDocState.js), før spilleren overhovedet kan blive markeret som færdig. Går skrivningen
   // galt (fx tabt forbindelse), får spilleren besked med det samme og "Indsend" gennemføres ikke —
   // fremfor at appen tavst lader spilleren tro, den er færdig, mens data reelt aldrig blev gemt.
+  // Kontrolkørsel: efter en skrivning RAPPORTERER sig selv som lykkedes, læser vi den bagefter
+  // tilbage direkte fra serveren (getDocFromServer — springer bevidst den lokale cache over, så vi
+  // reelt spørger databasen, ikke os selv) og tjekker at det, der nu står der, er nøjagtig det, vi
+  // lige forsøgte at gemme. Det er en ekstra tur til serveren, men den er den eneste måde at være
+  // helt sikker på, at "skrivningen lykkedes" ikke bare betyder "SDK'en sagde OK" — noget vi har set
+  // ikke altid kan stoles 100% på (se den hængende "Gemmer…", der krævede en genindlæsning).
+  const verifyAvailSaved=async()=>{
+    if(!invActive)return true;
+    try{
+      const snap=await getDocFromServer(doc(db,"state/availability"));
+      const key=availKey(invitation?.id,player.id);
+      const saved=new Set(snap.exists()?(snap.data()?.byPlayer?.[key]||[]):[]);
+      if(saved.size!==marked.size)return false;
+      for(const v of marked)if(!saved.has(v))return false;
+      return true;
+    }catch{return false;}
+  };
+  const verifySubmittedSaved=async()=>{
+    if(!(invitation&&hasInvitation))return true;
+    try{
+      const snap=await getDocFromServer(doc(db,"invitations",invitation.id));
+      const ids=snap.exists()?(snap.data()?.submittedIds||[]):[];
+      return ids.includes(player.id);
+    }catch{return false;}
+  };
+
   const submitCalendar=async()=>{
     if(isSubmitted||!editingSelf||submitState==="saving")return;
     setSubmitState("saving");
@@ -3120,10 +3146,14 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
       if(invActive){
         const availOk=await withTimeout(setAvail(availKey(invitation?.id,player.id),()=>marked));
         if(!availOk)return false;
+        const availVerified=await withTimeout(verifyAvailSaved());
+        if(!availVerified)return false;
       }
       if(invitation&&hasInvitation){
         const ok=await withTimeout(updateInvitation(invitation.id,prev=>({...prev,submittedIds:[...new Set([...(prev.submittedIds||[]),player.id])],comments:{...(prev.comments||{}),[player.id]:submitComment.trim()},submittedAt:{...(prev.submittedAt||{}),[player.id]:new Date().toISOString()}})));
         if(!ok)return false;
+        const submitVerified=await withTimeout(verifySubmittedSaved());
+        if(!submitVerified)return false;
       } else {
         setLockedPlayers(prev=>{const n=new Set(prev);n.add(player.id);return n;});
       }
