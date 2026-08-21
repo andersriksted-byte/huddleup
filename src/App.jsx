@@ -6,7 +6,7 @@ import {
   Lock, Eye, EyeOff, LogOut, LogIn, Key, Copy, Shield, Edit2, Check, User, Download, FileSpreadsheet, FileText, MoreVertical,
   Mail, ArrowLeft, RotateCcw, AlertTriangle
 } from "lucide-react";
-import { where, doc, setDoc, updateDoc, deleteDoc, getDocs, collection, query as fsQuery, arrayUnion, arrayRemove, deleteField } from "firebase/firestore";
+import { where, doc, setDoc, updateDoc, deleteDoc, getDocs, collection, query as fsQuery, arrayUnion, arrayRemove, deleteField, disableNetwork, enableNetwork } from "firebase/firestore";
 import { db, newDocId } from "./lib/firebase.js";
 import { useAuth } from "./hooks/useAuth.js";
 import { useFirestoreCollection } from "./hooks/useFirestoreCollection.js";
@@ -35,6 +35,26 @@ const slotKey = (iso, blk) => `${iso}|${blk}`;
 // forespørgsels egne markeringer. Uden en valgt forespørgsel (fx det fritstående "Kalender"-view
 // når man ikke har nogen aktiv forespørgsel) bruges "_none" som nøgle.
 const availKey = (invitationId, playerId) => `${invitationId || "_none"}:${playerId}`;
+
+// Firestores realtime-forbindelse kan i sjældne tilfælde "hænge" — en skrivning er hverken
+// bekræftet eller fejlet, den venter bare for evigt, tilsyneladende uafhængigt af om man reelt har
+// forbindelse (set på en fast kablet pc). Uden en grænse ville "Indsend" derfor kunne stå og vise
+// "Gemmer…" i det uendelige, med ingen vej videre for spilleren udover at genindlæse hele siden.
+// withTimeout sikrer, at vi efter TIMEOUT_MS opgiver at vente og i stedet behandler det som en
+// fejl, så knappen frigives og fejlen vises — uden krav om en genindlæsning af siden.
+const TIMEOUT_MS = 15000;
+const withTimeout = (promise, ms = TIMEOUT_MS) => Promise.race([
+  promise,
+  new Promise((resolve) => setTimeout(() => resolve(false), ms)),
+]);
+
+// Tvinger Firestores netværksforbindelse til at blive lukket og genoprettet fra bunden — samme
+// effekt som en genindlæsning af siden plejede at give (som netop var det, der løste den hængende
+// "Gemmer…" for Anders), men uden at spilleren mister sin plads i appen. Bruges som et sidste
+// forsøg, når en skrivning rammer TIMEOUT_MS ovenfor, før fejlen vises til spilleren.
+const reconnectFirestore = async () => {
+  try { await disableNetwork(db); await enableNetwork(db); } catch { /* ignorér — vi prøver alligevel igen */ }
+};
 
 function mondayOf(d) {
   const x = new Date(d); const j = x.getDay();
@@ -3093,17 +3113,32 @@ function SpillerKalender({currentUser,players,avail,setAvail,invitations,setInvi
   const submitCalendar=async()=>{
     if(isSubmitted||!editingSelf||submitState==="saving")return;
     setSubmitState("saving");
-    if(invActive){
-      const availOk=await setAvail(availKey(invitation?.id,player.id),()=>marked);
-      if(!availOk){setSubmitState("error");return;}
+    // (...Set(...) frem for bare at pushe player.id på) — hvis 1. forsøg herunder rent faktisk nåede
+    // igennem til serveren, men vi alligevel opgav pga. TIMEOUT_MS, må et 2. forsøg ikke ende med at
+    // tilføje spilleren to gange til submittedIds.
+    const trySave=async()=>{
+      if(invActive){
+        const availOk=await withTimeout(setAvail(availKey(invitation?.id,player.id),()=>marked));
+        if(!availOk)return false;
+      }
+      if(invitation&&hasInvitation){
+        const ok=await withTimeout(updateInvitation(invitation.id,prev=>({...prev,submittedIds:[...new Set([...(prev.submittedIds||[]),player.id])],comments:{...(prev.comments||{}),[player.id]:submitComment.trim()},submittedAt:{...(prev.submittedAt||{}),[player.id]:new Date().toISOString()}})));
+        if(!ok)return false;
+      } else {
+        setLockedPlayers(prev=>{const n=new Set(prev);n.add(player.id);return n;});
+      }
+      return true;
+    };
+    let ok=await trySave();
+    if(!ok){
+      // 1. forsøg fejlede eller hang i TIMEOUT_MS — samme situation Anders oplevede på en fast
+      // kablet forbindelse, hvor kun en genindlæsning af siden hjalp. Vi prøver først at tvinge
+      // Firestores forbindelse til at genoprette fra bunden (samme effekt som en genindlæsning), og
+      // forsøger så automatisk én gang til, FØR vi viser en fejl og beder spilleren prøve selv.
+      await reconnectFirestore();
+      ok=await trySave();
     }
-    if(invitation&&hasInvitation){
-      const ok=await updateInvitation(invitation.id,prev=>({...prev,submittedIds:[...(prev.submittedIds||[]),player.id],comments:{...(prev.comments||{}),[player.id]:submitComment.trim()},submittedAt:{...(prev.submittedAt||{}),[player.id]:new Date().toISOString()}}));
-      if(!ok){setSubmitState("error");return;}
-    } else {
-      setLockedPlayers(prev=>{const n=new Set(prev);n.add(player.id);return n;});
-    }
-    setSubmitState("idle");
+    setSubmitState(ok?"idle":"error");
   };
 
   const applyTemplate=()=>{
